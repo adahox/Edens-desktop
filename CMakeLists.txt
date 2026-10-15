@@ -1,0 +1,71 @@
+
+cmake_minimum_required(VERSION 3.20)
+
+project(Eden LANGUAGES C CXX)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(PkgConfig REQUIRED)
+
+pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb)
+pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
+
+qt_standard_project_setup()
+
+# Eden Desktop: C++ / Qt 6
+qt_add_executable(eden-desktop
+    desktop/src/main.cpp
+    desktop/src/desktop/desktopwindow.hpp
+    desktop/src/desktop/desktopwindow.cpp
+    desktop/src/filemanager/filemanagerwindow.hpp
+    desktop/src/filemanager/filemanagerwindow.cpp
+)
+
+target_include_directories(eden-desktop
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/desktop/src
+)
+
+target_link_libraries(eden-desktop
+    PRIVATE
+        Qt6::Widgets
+        PkgConfig::XCB
+)
+
+# Eden File Manager: C / GTK 3
+add_executable(edens
+    filemanager/src/main.c
+    filemanager/src/processors/directories.c
+    filemanager/src/ui/window/window.c
+    filemanager/src/ui/mainbox.c
+    filemanager/src/ui/toolbar.c
+    filemanager/src/ui/filearea.c
+    filemanager/src/ui/scrolledwindow.c
+    filemanager/src/ui/fileitem.c
+    filemanager/src/ui/window/menu.c
+    filemanager/src/ui/window/menu_actions.c
+    filemanager/src/ui/actionBar.c
+)
+
+target_include_directories(edens
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/filemanager/src
+)
+
+target_compile_options(edens
+    PRIVATE
+        -Wall
+        -Wextra
+)
+
+target_link_libraries(edens
+    PRIVATE
+        PkgConfig::GTK3
+)

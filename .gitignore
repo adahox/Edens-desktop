@@ -1,0 +1,19 @@
+
+# Build
+/build/
+
+# IDEs e ferramentas
+/.idea/
+/.vscode/
+/.cache/
+.clangd
+compile_commands.json
+
+# Arquivos compilados
+*.o
+*.a
+*.so
+
+# Executáveis gerados
+/edens
+/eden-desktop
