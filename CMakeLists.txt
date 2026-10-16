@@ -26,6 +26,10 @@ qt_add_executable(eden-desktop
     desktop/src/desktop/desktopwindow.cpp
     desktop/src/filemanager/filemanagerwindow.hpp
     desktop/src/filemanager/filemanagerwindow.cpp
+    desktop/src/windowmanager/windowmanager.hpp
+    desktop/src/windowmanager/windowmanager.cpp
+    desktop/src/windowmanager/windowmanagerprocessmessages.cpp
+    desktop/src/windowmanager/windowmanagerdesktop.cpp
 )
 
 target_include_directories(eden-desktop
@@ -52,6 +56,7 @@ add_executable(edens
     filemanager/src/ui/window/menu.c
     filemanager/src/ui/window/menu_actions.c
     filemanager/src/ui/actionBar.c
+    
 )
 
 target_include_directories(edens
@@ -69,3 +74,37 @@ target_link_libraries(edens
     PRIVATE
         PkgConfig::GTK3
 )
+
+add_executable(windowmanager-test
+    desktop/tests/windowmanager_test.cpp
+    desktop/src/windowmanager/windowmanager.cpp
+    desktop/src/windowmanager/windowmanagerprocessmessages.cpp
+    desktop/src/windowmanager/windowmanagerdesktop.cpp
+)
+
+add_executable(windowmanager-policy-test
+    desktop/tests/windowmanager_policy_test.cpp
+)
+
+target_include_directories(windowmanager-test
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/desktop/src
+)
+
+target_link_libraries(windowmanager-test
+    PRIVATE
+        PkgConfig::XCB
+)
+
+target_include_directories(windowmanager-policy-test
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/desktop/src
+)
+
+target_link_libraries(windowmanager-policy-test
+    PRIVATE
+        PkgConfig::XCB
+)
+
+enable_testing()
+add_test(NAME windowmanager-policy COMMAND windowmanager-policy-test)

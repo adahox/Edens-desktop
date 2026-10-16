@@ -84,6 +84,15 @@ static bool setDesktopWindowType(xcb_window_t window)
         &typeReply->atom
     );
 
+    const uint32_t stackMode[] = {XCB_STACK_MODE_BELOW};
+
+    xcb_configure_window(
+        connection,
+        window,
+        XCB_CONFIG_WINDOW_STACK_MODE,
+        stackMode
+    );
+
     xcb_flush(connection);
 
     std::free(propertyReply);
@@ -106,12 +115,12 @@ int main(int argc, char *argv[])
     }
 
     desktop.setGeometry(screen->geometry());
+    desktop.show();
 
-    // Definir o tipo da janela como desktop
-    if (!setDesktopWindowType(desktop.winId())) {
+    if (!setDesktopWindowType(static_cast<xcb_window_t>(desktop.winId()))) {
         return 1;
     }
-    desktop.show();
+
     return app.exec();
 }
 

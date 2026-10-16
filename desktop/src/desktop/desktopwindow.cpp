@@ -16,7 +16,30 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QFileInfo>
+#include <QFileIconProvider>
+#include <QCloseEvent>
+#include <QApplication>
+#include <QStyle>
 #include "filemanager/filemanagerwindow.hpp"
+
+namespace {
+
+class DesktopIconProvider final : public QFileIconProvider
+{
+public:
+    QIcon icon(const QFileInfo &info) const override
+    {
+        const QStyle *style = QApplication::style();
+
+        if (info.isDir()) {
+            return style->standardIcon(QStyle::SP_DirIcon);
+        }
+
+        return style->standardIcon(QStyle::SP_FileIcon);
+    }
+};
+
+}  // namespace
 
 #include <QDesktopServices>
 #include <QUrl>
@@ -25,20 +48,29 @@
 #include <QStringList>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QBrush>
 #include <QCoreApplication>
 #include <QDir>
+#include <QPalette>
 
 DesktopWindow::DesktopWindow(QWidget *parent)
     : QWidget(parent),
-      homeDirectory_(
+      desktopDirectory_(
           QStandardPaths::writableLocation(
-              QStandardPaths::HomeLocation
+              QStandardPaths::DesktopLocation
           )
       )
 {
+    if (desktopDirectory_.isEmpty()) {
+        desktopDirectory_ = QDir::homePath();
+    }
+
+    QDir().mkpath(desktopDirectory_);
+
     setWindowFlags(
         Qt::Window |
-        Qt::FramelessWindowHint
+        Qt::FramelessWindowHint |
+        Qt::BypassWindowManagerHint
     );
 
     setAttribute(Qt::WA_OpaquePaintEvent);
@@ -47,26 +79,36 @@ DesktopWindow::DesktopWindow(QWidget *parent)
     setupFileArea();
 }
 
+DesktopWindow::~DesktopWindow()
+{
+    if (fileSystemModel_ != nullptr) {
+        fileSystemModel_->setIconProvider(nullptr);
+    }
+
+    delete iconProvider_;
+    iconProvider_ = nullptr;
+}
+
 void DesktopWindow::setupFileArea()
 {
     fileSystemModel_ = new QFileSystemModel(this);
 
     fileSystemModel_->setFilter(
-        QDir::AllEntries |
-        QDir::NoDotAndDotDot
+        QDir::AllDirs |
+        QDir::Files |
+        QDir::NoDotAndDotDot |
+        QDir::Readable
     );
 
-    fileSystemModel_->setRootPath(homeDirectory_);
+    iconProvider_ = new DesktopIconProvider();
+    fileSystemModel_->setIconProvider(iconProvider_);
+    fileSystemModel_->setRootPath(desktopDirectory_);
 
     fileView_ = new QListView(this);
 
     fileView_->setModel(fileSystemModel_);
-    fileView_->setRootIndex(
-        fileSystemModel_->index(homeDirectory_)
-    );
-
     fileView_->setViewMode(QListView::IconMode);
-    fileView_->setFlow(QListView::TopToBottom);
+    fileView_->setFlow(QListView::LeftToRight);
     fileView_->setMovement(QListView::Snap);
     fileView_->setResizeMode(QListView::Adjust);
     fileView_->setWrapping(true);
@@ -85,9 +127,11 @@ void DesktopWindow::setupFileArea()
         Qt::CustomContextMenu
     );
 
+    fileView_->setAutoFillBackground(false);
+    fileView_->viewport()->setAutoFillBackground(false);
+    fileView_->setFrameShape(QFrame::NoFrame);
     fileView_->setStyleSheet(R"(
         QListView {
-            background: transparent;
             border: none;
             color: #FFFFFF;
             outline: none;
@@ -130,11 +174,87 @@ void DesktopWindow::setupFileArea()
         }
     );
 
+    connect(
+        fileSystemModel_,
+        &QFileSystemModel::directoryLoaded,
+        this,
+        [this](const QString &path) {
+            if (QDir(path) != QDir(desktopDirectory_)) {
+                return;
+            }
+
+            const QModelIndex root =
+                fileSystemModel_->index(desktopDirectory_);
+
+            if (root.isValid()) {
+                fileView_->setRootIndex(root);
+            }
+        }
+    );
+
+    const QModelIndex root = fileSystemModel_->index(desktopDirectory_);
+
+    if (root.isValid()) {
+        fileView_->setRootIndex(root);
+    }
 
     fileView_->setGeometry(rect());
+    applyWallpaper();
 }
 
+QString DesktopWindow::wallpaperPath() const
+{
+    const QDir binaryDirectory(QCoreApplication::applicationDirPath());
+    const QString candidates[] = {
+        binaryDirectory.filePath("../assets/wallpapers/default.jpg"),
+        binaryDirectory.filePath("assets/wallpapers/default.jpg"),
+        QStringLiteral("assets/wallpapers/default.jpg")
+    };
 
+    for (const QString &candidate : candidates) {
+        const QString cleaned = QDir::cleanPath(candidate);
+
+        if (QFileInfo::exists(cleaned)) {
+            return cleaned;
+        }
+    }
+
+    return QString();
+}
+
+void DesktopWindow::applyWallpaper()
+{
+    if (width() <= 0 || height() <= 0) {
+        return;
+    }
+
+    const QPixmap source(wallpaperPath());
+
+    if (source.isNull()) {
+        wallpaper_ = QPixmap(size());
+        wallpaper_.fill(QColor("#20252D"));
+    } else {
+        const QPixmap scaled = source.scaled(
+            size(),
+            Qt::KeepAspectRatioByExpanding,
+            Qt::SmoothTransformation);
+        const int x = qMax(0, (scaled.width() - width()) / 2);
+        const int y = qMax(0, (scaled.height() - height()) / 2);
+        wallpaper_ = scaled.copy(x, y, width(), height());
+    }
+
+    if (fileView_ != nullptr && fileView_->viewport() != nullptr) {
+        QPalette palette = fileView_->viewport()->palette();
+        const QBrush brush(wallpaper_);
+        palette.setBrush(QPalette::Base, brush);
+        palette.setBrush(QPalette::Window, brush);
+        palette.setColor(QPalette::Text, QColor("#FFFFFF"));
+        fileView_->viewport()->setPalette(palette);
+        fileView_->viewport()->setAutoFillBackground(true);
+    }
+
+    update();
+}
 
 void DesktopWindow::openItem(const QModelIndex &index)
 {
@@ -169,6 +289,7 @@ void DesktopWindow::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     fileView_->setGeometry(rect());
+    applyWallpaper();
 }
 
 
@@ -178,36 +299,19 @@ void DesktopWindow::paintEvent(QPaintEvent *event)
 
     QPainter painter(this);
 
-    const QPixmap wallpaper(
-        "assets/wallpapers/default.jpg"
-    );
-
-    if (wallpaper.isNull()) {
+    if (wallpaper_.isNull()) {
         painter.fillRect(rect(), QColor("#20252D"));
         return;
     }
 
-    const QSize scaledSize =
-        wallpaper.size().scaled(
-            size(),
-            Qt::KeepAspectRatioByExpanding
-        );
-
-    const QPixmap scaledWallpaper =
-        wallpaper.scaled(
-            scaledSize,
-            Qt::KeepAspectRatio,
-            Qt::SmoothTransformation
-        );
-
-    const QPoint position(
-        (width() - scaledWallpaper.width()) / 2,
-        (height() - scaledWallpaper.height()) / 2
-    );
-
-    painter.drawPixmap(position, scaledWallpaper);
+    painter.drawPixmap(0, 0, wallpaper_);
 }
 
+
+void DesktopWindow::closeEvent(QCloseEvent *event)
+{
+    event->ignore();
+}
 
 void DesktopWindow::contextMenuEvent(QContextMenuEvent *event)
 {
@@ -231,16 +335,21 @@ void DesktopWindow::showDesktopContextMenu(
     QAction *settingsAction =
         menu.addAction("Configurações do Eden");
 
+    menu.addSeparator();
+
+    QAction *quitAction =
+        menu.addAction("Encerrar sessão");
+
     QAction *selectedAction =
         menu.exec(globalPosition);
 
     if (selectedAction == refreshAction) {
         fileSystemModel_->setRootPath(QString());
 
-        fileSystemModel_->setRootPath(homeDirectory_);
+        fileSystemModel_->setRootPath(desktopDirectory_);
 
         fileView_->setRootIndex(
-            fileSystemModel_->index(homeDirectory_)
+            fileSystemModel_->index(desktopDirectory_)
         );
 
         return;
@@ -270,6 +379,11 @@ void DesktopWindow::showDesktopContextMenu(
 
     if (selectedAction == settingsAction) {
         // Implementaremos as configurações posteriormente.
+        return;
+    }
+
+    if (selectedAction == quitAction) {
+        QApplication::quit();
     }
 }
 

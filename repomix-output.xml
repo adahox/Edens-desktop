@@ -1,0 +1,3310 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+assets/
+  wallpapers/
+    default.jpg
+desktop/
+  src/
+    desktop/
+      desktopwindow.cpp
+      desktopwindow.hpp
+    filemanager/
+      filemanagerwindow.cpp
+      filemanagerwindow.hpp
+    windowmanager/
+      windowmanager.cpp
+      windowmanager.hpp
+    main.cpp
+  tests/
+    windowmanager_test.cpp
+filemanager/
+  src/
+    processors/
+      directories.c
+      directories.h
+    ui/
+      window/
+        header_bar.c
+        menu_actions.c
+        menu_actions.h
+        menu.c
+        menu.h
+        window.c
+        window.h
+      actionBar.c
+      actionBar.h
+      filearea.c
+      filearea.h
+      fileitem.c
+      fileitem.h
+      mainbox.c
+      mainbox.h
+      scrolledwindow.c
+      scrolledwindow.h
+      toolbar.c
+      toolbar.h
+    main.c
+.gitignore
+CMakeLists.txt
+README.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="desktop/src/windowmanager/windowmanager.cpp">
+#include "windowmanager.hpp"
+
+#include <cstdlib>
+#include <iostream>
+
+namespace {
+
+constexpr uint16_t kTitleBarHeight = 32;
+constexpr uint16_t kButtonSize = 18;
+constexpr uint16_t kButtonGap = 6;
+constexpr uint16_t kButtonMargin = 8;
+
+enum class TitleButton {
+    None,
+    Minimize,
+    Maximize,
+    Close
+};
+
+struct TitleButtonLayout {
+    int16_t x = 0;
+    int16_t y = 0;
+};
+
+struct TitleBarButtons {
+    TitleButtonLayout minimize;
+    TitleButtonLayout maximize;
+    TitleButtonLayout close;
+};
+
+TitleBarButtons titleBarButtons(uint16_t frameWidth)
+{
+    const int16_t y = static_cast<int16_t>(
+        (kTitleBarHeight - kButtonSize) / 2);
+    const int16_t closeX = static_cast<int16_t>(
+        frameWidth - kButtonMargin - kButtonSize);
+    const int16_t maximizeX = static_cast<int16_t>(
+        closeX - kButtonGap - kButtonSize);
+    const int16_t minimizeX = static_cast<int16_t>(
+        maximizeX - kButtonGap - kButtonSize);
+
+    return {
+        {minimizeX, y},
+        {maximizeX, y},
+        {closeX, y}
+    };
+}
+
+bool containsButton(const TitleButtonLayout& button, int16_t x, int16_t y)
+{
+    return x >= button.x &&
+           x < button.x + static_cast<int16_t>(kButtonSize) &&
+           y >= button.y &&
+           y < button.y + static_cast<int16_t>(kButtonSize);
+}
+
+TitleButton titleButtonAt(uint16_t frameWidth, int16_t x, int16_t y)
+{
+    if (y < 0 || y >= static_cast<int16_t>(kTitleBarHeight)) {
+        return TitleButton::None;
+    }
+
+    const TitleBarButtons buttons = titleBarButtons(frameWidth);
+
+    if (containsButton(buttons.close, x, y)) {
+        return TitleButton::Close;
+    }
+
+    if (containsButton(buttons.maximize, x, y)) {
+        return TitleButton::Maximize;
+    }
+
+    if (containsButton(buttons.minimize, x, y)) {
+        return TitleButton::Minimize;
+    }
+
+    return TitleButton::None;
+}
+
+uint32_t colorPixel(
+    xcb_connection_t* connection,
+    xcb_colormap_t colormap,
+    uint16_t red,
+    uint16_t green,
+    uint16_t blue,
+    uint32_t fallback)
+{
+    const auto cookie = xcb_alloc_color(
+        connection,
+        colormap,
+        red,
+        green,
+        blue);
+
+    xcb_alloc_color_reply_t* reply =
+        xcb_alloc_color_reply(connection, cookie, nullptr);
+
+    if (reply == nullptr) {
+        return fallback;
+    }
+
+    const uint32_t pixel = reply->pixel;
+    std::free(reply);
+    return pixel;
+}
+
+void fillButton(
+    xcb_connection_t* connection,
+    xcb_window_t frame,
+    xcb_gcontext_t gc,
+    const TitleButtonLayout& button)
+{
+    const xcb_rectangle_t rectangle = {
+        button.x,
+        button.y,
+        kButtonSize,
+        kButtonSize
+    };
+
+    xcb_poly_fill_rectangle(connection, frame, gc, 1, &rectangle);
+}
+
+void drawMinimizeGlyph(
+    xcb_connection_t* connection,
+    xcb_window_t frame,
+    xcb_gcontext_t gc,
+    const TitleButtonLayout& button)
+{
+    const int16_t y = static_cast<int16_t>(button.y + (kButtonSize / 2));
+    const xcb_segment_t segment = {
+        static_cast<int16_t>(button.x + 5),
+        y,
+        static_cast<int16_t>(button.x + kButtonSize - 5),
+        y
+    };
+
+    xcb_poly_segment(connection, frame, gc, 1, &segment);
+}
+
+void drawMaximizeGlyph(
+    xcb_connection_t* connection,
+    xcb_window_t frame,
+    xcb_gcontext_t gc,
+    const TitleButtonLayout& button,
+    bool maximized)
+{
+    if (maximized) {
+        const xcb_rectangle_t back = {
+            static_cast<int16_t>(button.x + 7),
+            static_cast<int16_t>(button.y + 4),
+            8,
+            8
+        };
+        const xcb_rectangle_t front = {
+            static_cast<int16_t>(button.x + 4),
+            static_cast<int16_t>(button.y + 7),
+            8,
+            8
+        };
+
+        xcb_poly_rectangle(connection, frame, gc, 1, &back);
+        xcb_poly_rectangle(connection, frame, gc, 1, &front);
+        return;
+    }
+
+    const xcb_rectangle_t rectangle = {
+        static_cast<int16_t>(button.x + 4),
+        static_cast<int16_t>(button.y + 4),
+        static_cast<uint16_t>(kButtonSize - 8),
+        static_cast<uint16_t>(kButtonSize - 8)
+    };
+
+    xcb_poly_rectangle(connection, frame, gc, 1, &rectangle);
+}
+
+void drawCloseGlyph(
+    xcb_connection_t* connection,
+    xcb_window_t frame,
+    xcb_gcontext_t gc,
+    const TitleButtonLayout& button)
+{
+    const int16_t left = static_cast<int16_t>(button.x + 5);
+    const int16_t right = static_cast<int16_t>(button.x + kButtonSize - 5);
+    const int16_t top = static_cast<int16_t>(button.y + 5);
+    const int16_t bottom = static_cast<int16_t>(button.y + kButtonSize - 5);
+
+    const xcb_segment_t segments[] = {
+        {left, top, right, bottom},
+        {right, top, left, bottom}
+    };
+
+    xcb_poly_segment(connection, frame, gc, 2, segments);
+}
+
+uint32_t packedCoordinate(int16_t value)
+{
+    return static_cast<uint32_t>(static_cast<int32_t>(value));
+}
+
+}  // namespace
+
+WindowManager::~WindowManager()
+{
+    disconnect();
+}
+
+bool WindowManager::connect()
+{
+    if (isConnected()) {
+        return true;
+    }
+
+    disconnect();
+
+    int screenNumber = 0;
+    connection_ = xcb_connect(nullptr, &screenNumber);
+
+    if (connection_ == nullptr ||
+        xcb_connection_has_error(connection_) != 0) {
+        disconnect();
+        return false;
+    }
+
+    const xcb_setup_t* setup = xcb_get_setup(connection_);
+
+    if (setup == nullptr) {
+        disconnect();
+        return false;
+    }
+
+    xcb_screen_iterator_t iterator =
+        xcb_setup_roots_iterator(setup);
+
+    for (int index = 0;
+         index < screenNumber && iterator.rem;
+         ++index) {
+        xcb_screen_next(&iterator);
+    }
+
+    if (!iterator.rem || iterator.data == nullptr) {
+        disconnect();
+        return false;
+    }
+
+    screen_ = iterator.data;
+
+    return true;
+}
+
+bool WindowManager::acquireControl()
+{
+    if (!isConnected()) {
+        return false;
+    }
+
+    if (controlAcquired_) {
+        return true;
+    }
+
+    const uint32_t eventMask =
+        XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT |
+        XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
+
+    const auto cookie = xcb_change_window_attributes_checked(
+        connection_,
+        screen_->root,
+        XCB_CW_EVENT_MASK,
+        &eventMask
+    );
+
+    xcb_generic_error_t* error =
+        xcb_request_check(connection_, cookie);
+
+    if (error != nullptr) {
+        std::free(error);
+        return false;
+    }
+
+    controlAcquired_ = true;
+    return true;
+}
+
+void WindowManager::disconnect()
+{
+    controlAcquired_ = false;
+    screen_ = nullptr;
+    wmProtocols_ = XCB_ATOM_NONE;
+    wmDeleteWindow_ = XCB_ATOM_NONE;
+    wmTakeFocus_ = XCB_ATOM_NONE;
+    focusedFrame_ = XCB_WINDOW_NONE;
+    draggingFrame_ = XCB_WINDOW_NONE;
+    windows_.clear();
+
+    if (connection_ != nullptr) {
+        xcb_disconnect(connection_);
+        connection_ = nullptr;
+    }
+}
+
+bool WindowManager::isConnected() const noexcept
+{
+    return connection_ != nullptr &&
+           xcb_connection_has_error(connection_) == 0 &&
+           screen_ != nullptr;
+}
+
+void WindowManager::run()
+{
+    if (!isConnected() || !controlAcquired_) {
+        std::cerr
+            << "O WindowManager precisa estar conectado "
+            << "e ter adquirido o controle.\n";
+        return;
+    }
+
+    running_ = true;
+
+    std::cout << "Eden WindowManager ativo. Pressione Ctrl+C para sair.\n";
+
+    while (running_) {
+        xcb_generic_event_t* event =
+            xcb_wait_for_event(connection_);
+
+        if (event == nullptr) {
+            if (xcb_connection_has_error(connection_) != 0) {
+                std::cerr << "A conexão X11 foi encerrada.\n";
+                break;
+            }
+
+            continue;
+        }
+
+        handleEvent(event);
+        std::free(event);
+    }
+
+    running_ = false;
+}
+
+void WindowManager::stop()
+{
+    running_ = false;
+}
+
+
+bool WindowManager::manageWindow(xcb_window_t client)
+{
+    if (!isConnected() || windows_.contains(client)) {
+        return false;
+    }
+
+    const auto geometryCookie =
+        xcb_get_geometry(connection_, client);
+
+    xcb_generic_error_t* geometryError = nullptr;
+    xcb_get_geometry_reply_t* geometry =
+        xcb_get_geometry_reply(
+            connection_,
+            geometryCookie,
+            &geometryError
+        );
+
+    if (geometryError != nullptr || geometry == nullptr) {
+        std::free(geometryError);
+        std::free(geometry);
+        return false;
+    }
+
+    const uint16_t width = geometry->width;
+    const uint16_t height = geometry->height;
+    const int16_t x = geometry->x;
+    const int16_t y = geometry->y;
+
+    std::free(geometry);
+
+    const xcb_window_t frame = xcb_generate_id(connection_);
+    const uint32_t frameValues[] = {
+        screen_->black_pixel,
+        XCB_EVENT_MASK_BUTTON_PRESS
+    };
+
+    xcb_create_window(
+        connection_,
+        XCB_COPY_FROM_PARENT,
+        frame,
+        screen_->root,
+        x,
+        y,
+        width,
+        height + kTitleBarHeight,
+        0,
+        XCB_WINDOW_CLASS_INPUT_OUTPUT,
+        screen_->root_visual,
+        XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK,
+        frameValues
+    );
+
+    const xcb_window_t titleBar = xcb_generate_id(connection_);
+    const uint32_t titleBarValues[] = {
+        screen_->black_pixel,
+        XCB_EVENT_MASK_EXPOSURE |
+            XCB_EVENT_MASK_BUTTON_PRESS |
+            XCB_EVENT_MASK_BUTTON_RELEASE |
+            XCB_EVENT_MASK_POINTER_MOTION
+    };
+
+    xcb_create_window(
+        connection_,
+        XCB_COPY_FROM_PARENT,
+        titleBar,
+        frame,
+        0,
+        0,
+        width,
+        kTitleBarHeight,
+        0,
+        XCB_WINDOW_CLASS_INPUT_OUTPUT,
+        screen_->root_visual,
+        XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK,
+        titleBarValues
+    );
+
+    xcb_reparent_window(
+        connection_,
+        client,
+        frame,
+        0,
+        kTitleBarHeight
+    );
+
+    const uint32_t clientEventMask =
+        XCB_EVENT_MASK_STRUCTURE_NOTIFY |
+        XCB_EVENT_MASK_BUTTON_PRESS;
+
+    xcb_change_window_attributes(
+        connection_,
+        client,
+        XCB_CW_EVENT_MASK,
+        &clientEventMask
+    );
+
+    for (uint8_t button = XCB_BUTTON_INDEX_1;
+         button <= XCB_BUTTON_INDEX_3;
+         ++button) {
+        xcb_grab_button(
+            connection_,
+            0,
+            client,
+            XCB_EVENT_MASK_BUTTON_PRESS,
+            XCB_GRAB_MODE_SYNC,
+            XCB_GRAB_MODE_ASYNC,
+            XCB_WINDOW_NONE,
+            XCB_CURSOR_NONE,
+            button,
+            XCB_MOD_MASK_ANY
+        );
+    }
+
+
+    xcb_map_window(connection_, titleBar);
+    xcb_map_window(connection_, client);
+    xcb_map_window(connection_, frame);
+
+    ManagedWindow& managed =
+        windows_.emplace(client, ManagedWindow{client, frame, titleBar})
+            .first->second;
+
+    focusWindow(managed, XCB_CURRENT_TIME);
+
+    xcb_flush(connection_);
+
+    std::cout
+        << "Janela decorada: " << client
+        << " (moldura " << frame
+        << ", barra " << titleBar << ")\n";
+
+    return true;
+}
+
+void WindowManager::unmanageWindow(xcb_window_t client)
+{
+    const auto iterator = windows_.find(client);
+
+    if (iterator == windows_.end()) {
+        return;
+    }
+
+    const xcb_window_t frame = iterator->second.frame;
+
+    if (focusedFrame_ == frame) {
+        clearFocus();
+    }
+
+    xcb_reparent_window(
+        connection_,
+        client,
+        screen_->root,
+        0,
+        0
+    );
+
+    xcb_destroy_window(connection_, frame);
+
+    windows_.erase(iterator);
+
+    xcb_flush(connection_);
+}
+
+
+
+void WindowManager::drawTitleBar(xcb_window_t titleBar)
+{
+    constexpr char title[] = "Eden Window";
+
+    const auto geometryCookie = xcb_get_geometry(connection_, titleBar);
+
+    xcb_generic_error_t* error = nullptr;
+    xcb_get_geometry_reply_t* geometry =
+        xcb_get_geometry_reply(connection_, geometryCookie, &error);
+
+    std::free(error);
+
+    if (geometry == nullptr) {
+        return;
+    }
+
+    const ManagedWindow* managed = findByTitleBar(titleBar);
+    const bool maximized = managed != nullptr && managed->maximized;
+    const bool focused =
+        managed != nullptr && managed->frame == focusedFrame_;
+
+    const uint32_t backgroundColor = focused
+        ? colorPixel(
+              connection_,
+              screen_->default_colormap,
+              0x2F2F,
+              0x6F6F,
+              0x4E4E,
+              screen_->black_pixel)
+        : colorPixel(
+              connection_,
+              screen_->default_colormap,
+              0x2A2A,
+              0x2A2A,
+              0x2A2A,
+              screen_->black_pixel);
+
+    const uint32_t buttonColor = focused
+        ? colorPixel(
+              connection_,
+              screen_->default_colormap,
+              0x2458,
+              0x5C5C,
+              0x4040,
+              backgroundColor)
+        : colorPixel(
+              connection_,
+              screen_->default_colormap,
+              0x3A3A,
+              0x3A3A,
+              0x3A3A,
+              backgroundColor);
+
+    const uint32_t closeColor = focused
+        ? colorPixel(
+              connection_,
+              screen_->default_colormap,
+              0xCCCC,
+              0x3333,
+              0x3333,
+              buttonColor)
+        : colorPixel(
+              connection_,
+              screen_->default_colormap,
+              0x6A6A,
+              0x3A3A,
+              0x3A3A,
+              buttonColor);
+
+    const uint32_t titleColor = focused
+        ? screen_->white_pixel
+        : colorPixel(
+              connection_,
+              screen_->default_colormap,
+              0x8C8C,
+              0x8C8C,
+              0x8C8C,
+              screen_->white_pixel);
+
+    const xcb_gcontext_t gc = xcb_generate_id(connection_);
+
+    const uint32_t values[] = {
+        XCB_GX_COPY,
+        backgroundColor,
+        2,
+        0
+    };
+
+    xcb_create_gc(
+        connection_,
+        gc,
+        titleBar,
+        XCB_GC_FUNCTION |
+            XCB_GC_FOREGROUND |
+            XCB_GC_LINE_WIDTH |
+            XCB_GC_GRAPHICS_EXPOSURES,
+        values
+    );
+
+    const xcb_rectangle_t rectangle = {
+        0,
+        0,
+        geometry->width,
+        geometry->height
+    };
+
+    xcb_poly_fill_rectangle(
+        connection_,
+        titleBar,
+        gc,
+        1,
+        &rectangle
+    );
+
+    xcb_change_gc(
+        connection_,
+        gc,
+        XCB_GC_FOREGROUND,
+        &titleColor
+    );
+
+    xcb_image_text_8(
+        connection_,
+        sizeof(title) - 1,
+        titleBar,
+        gc,
+        10,
+        21,
+        title
+    );
+
+    const TitleBarButtons buttons = titleBarButtons(geometry->width);
+
+    xcb_change_gc(connection_, gc, XCB_GC_FOREGROUND, &buttonColor);
+    fillButton(connection_, titleBar, gc, buttons.minimize);
+    fillButton(connection_, titleBar, gc, buttons.maximize);
+
+    xcb_change_gc(connection_, gc, XCB_GC_FOREGROUND, &closeColor);
+    fillButton(connection_, titleBar, gc, buttons.close);
+
+    xcb_change_gc(connection_, gc, XCB_GC_FOREGROUND, &titleColor);
+    drawMinimizeGlyph(connection_, titleBar, gc, buttons.minimize);
+    drawMaximizeGlyph(
+        connection_,
+        titleBar,
+        gc,
+        buttons.maximize,
+        maximized);
+    drawCloseGlyph(connection_, titleBar, gc, buttons.close);
+
+    xcb_free_gc(connection_, gc);
+    std::free(geometry);
+    xcb_flush(connection_);
+}
+
+WindowManager::ManagedWindow* WindowManager::findByFrame(xcb_window_t frame)
+{
+    for (auto& [client, managed] : windows_) {
+        (void)client;
+
+        if (managed.frame == frame) {
+            return &managed;
+        }
+    }
+
+    return nullptr;
+}
+
+WindowManager::ManagedWindow*
+WindowManager::findByTitleBar(xcb_window_t titleBar)
+{
+    for (auto& [client, managed] : windows_) {
+        (void)client;
+
+        if (managed.titleBar == titleBar) {
+            return &managed;
+        }
+    }
+
+    return nullptr;
+}
+
+void WindowManager::ensureAtoms()
+{
+    if (connection_ == nullptr ||
+        (wmProtocols_ != XCB_ATOM_NONE &&
+         wmDeleteWindow_ != XCB_ATOM_NONE &&
+         wmTakeFocus_ != XCB_ATOM_NONE)) {
+        return;
+    }
+
+    const auto protocolsCookie = xcb_intern_atom(
+        connection_,
+        0,
+        12,
+        "WM_PROTOCOLS");
+    const auto deleteCookie = xcb_intern_atom(
+        connection_,
+        0,
+        16,
+        "WM_DELETE_WINDOW");
+    const auto takeFocusCookie = xcb_intern_atom(
+        connection_,
+        0,
+        13,
+        "WM_TAKE_FOCUS");
+
+    xcb_intern_atom_reply_t* protocols =
+        xcb_intern_atom_reply(connection_, protocolsCookie, nullptr);
+    xcb_intern_atom_reply_t* deleteWindow =
+        xcb_intern_atom_reply(connection_, deleteCookie, nullptr);
+    xcb_intern_atom_reply_t* takeFocus =
+        xcb_intern_atom_reply(connection_, takeFocusCookie, nullptr);
+
+    if (protocols != nullptr) {
+        wmProtocols_ = protocols->atom;
+        std::free(protocols);
+    }
+
+    if (deleteWindow != nullptr) {
+        wmDeleteWindow_ = deleteWindow->atom;
+        std::free(deleteWindow);
+    }
+
+    if (takeFocus != nullptr) {
+        wmTakeFocus_ = takeFocus->atom;
+        std::free(takeFocus);
+    }
+}
+
+bool WindowManager::clientSupportsProtocol(
+    xcb_window_t client,
+    xcb_atom_t protocol)
+{
+    ensureAtoms();
+
+    if (wmProtocols_ == XCB_ATOM_NONE || protocol == XCB_ATOM_NONE) {
+        return false;
+    }
+
+    const auto cookie = xcb_get_property(
+        connection_,
+        0,
+        client,
+        wmProtocols_,
+        XCB_ATOM_ATOM,
+        0,
+        32);
+
+    xcb_get_property_reply_t* reply =
+        xcb_get_property_reply(connection_, cookie, nullptr);
+
+    if (reply == nullptr) {
+        return false;
+    }
+
+    const auto* atoms = static_cast<const xcb_atom_t*>(
+        xcb_get_property_value(reply));
+    const int count =
+        xcb_get_property_value_length(reply) /
+        static_cast<int>(sizeof(xcb_atom_t));
+
+    bool supports = false;
+
+    for (int index = 0; index < count; ++index) {
+        if (atoms[index] == protocol) {
+            supports = true;
+            break;
+        }
+    }
+
+    std::free(reply);
+    return supports;
+}
+
+bool WindowManager::clientAcceptsClose(xcb_window_t client)
+{
+    return clientSupportsProtocol(client, wmDeleteWindow_);
+}
+
+void WindowManager::focusWindow(ManagedWindow& window, xcb_timestamp_t time)
+{
+    const xcb_window_t previous = focusedFrame_;
+    const bool changed = previous != window.frame;
+
+    const uint32_t stackMode[] = {XCB_STACK_MODE_ABOVE};
+
+    xcb_configure_window(
+        connection_,
+        window.frame,
+        XCB_CONFIG_WINDOW_STACK_MODE,
+        stackMode);
+
+    xcb_set_input_focus(
+        connection_,
+        XCB_INPUT_FOCUS_POINTER_ROOT,
+        window.client,
+        time);
+
+    if (clientSupportsProtocol(window.client, wmTakeFocus_)) {
+        xcb_client_message_event_t message = {};
+        message.response_type = XCB_CLIENT_MESSAGE;
+        message.format = 32;
+        message.window = window.client;
+        message.type = wmProtocols_;
+        message.data.data32[0] = wmTakeFocus_;
+        message.data.data32[1] = time;
+
+        xcb_send_event(
+            connection_,
+            0,
+            window.client,
+            XCB_EVENT_MASK_NO_EVENT,
+            reinterpret_cast<const char*>(&message));
+    }
+
+    focusedFrame_ = window.frame;
+
+    if (changed) {
+        if (ManagedWindow* previousWindow = findByFrame(previous)) {
+            drawTitleBar(previousWindow->titleBar);
+        }
+
+        drawTitleBar(window.titleBar);
+    }
+
+    xcb_flush(connection_);
+}
+
+void WindowManager::clearFocus()
+{
+    focusedFrame_ = XCB_WINDOW_NONE;
+
+    if (!isConnected()) {
+        return;
+    }
+
+    xcb_set_input_focus(
+        connection_,
+        XCB_INPUT_FOCUS_POINTER_ROOT,
+        screen_->root,
+        XCB_CURRENT_TIME);
+
+    xcb_flush(connection_);
+}
+
+void WindowManager::closeWindow(ManagedWindow& window)
+{
+    if (draggingFrame_ == window.frame) {
+        draggingFrame_ = XCB_WINDOW_NONE;
+        xcb_ungrab_pointer(connection_, XCB_CURRENT_TIME);
+    }
+
+    if (!clientAcceptsClose(window.client)) {
+        xcb_destroy_window(connection_, window.client);
+        xcb_flush(connection_);
+        return;
+    }
+
+    xcb_client_message_event_t message = {};
+    message.response_type = XCB_CLIENT_MESSAGE;
+    message.format = 32;
+    message.window = window.client;
+    message.type = wmProtocols_;
+    message.data.data32[0] = wmDeleteWindow_;
+    message.data.data32[1] = XCB_CURRENT_TIME;
+
+    xcb_send_event(
+        connection_,
+        0,
+        window.client,
+        XCB_EVENT_MASK_NO_EVENT,
+        reinterpret_cast<const char*>(&message));
+
+    xcb_flush(connection_);
+}
+
+void WindowManager::minimizeWindow(ManagedWindow& window)
+{
+    if (draggingFrame_ == window.frame) {
+        draggingFrame_ = XCB_WINDOW_NONE;
+        xcb_ungrab_pointer(connection_, XCB_CURRENT_TIME);
+    }
+
+    if (focusedFrame_ == window.frame) {
+        clearFocus();
+    }
+
+    xcb_unmap_window(connection_, window.frame);
+    xcb_flush(connection_);
+}
+
+void WindowManager::layoutFrame(
+    ManagedWindow& window,
+    int16_t x,
+    int16_t y,
+    uint16_t width,
+    uint16_t height)
+{
+    const uint32_t frameValues[] = {
+        packedCoordinate(x),
+        packedCoordinate(y),
+        width,
+        height
+    };
+
+    xcb_configure_window(
+        connection_,
+        window.frame,
+        XCB_CONFIG_WINDOW_X |
+            XCB_CONFIG_WINDOW_Y |
+            XCB_CONFIG_WINDOW_WIDTH |
+            XCB_CONFIG_WINDOW_HEIGHT,
+        frameValues);
+
+    const uint32_t titleBarValues[] = {
+        0u,
+        0u,
+        width,
+        kTitleBarHeight
+    };
+
+    xcb_configure_window(
+        connection_,
+        window.titleBar,
+        XCB_CONFIG_WINDOW_X |
+            XCB_CONFIG_WINDOW_Y |
+            XCB_CONFIG_WINDOW_WIDTH |
+            XCB_CONFIG_WINDOW_HEIGHT,
+        titleBarValues);
+
+    const uint16_t clientHeight =
+        height > kTitleBarHeight
+            ? static_cast<uint16_t>(height - kTitleBarHeight)
+            : static_cast<uint16_t>(1);
+
+    const uint32_t clientValues[] = {
+        0u,
+        kTitleBarHeight,
+        width,
+        clientHeight,
+        0u
+    };
+
+    xcb_configure_window(
+        connection_,
+        window.client,
+        XCB_CONFIG_WINDOW_X |
+            XCB_CONFIG_WINDOW_Y |
+            XCB_CONFIG_WINDOW_WIDTH |
+            XCB_CONFIG_WINDOW_HEIGHT |
+            XCB_CONFIG_WINDOW_BORDER_WIDTH,
+        clientValues);
+
+    const uint32_t stackMode[] = {XCB_STACK_MODE_ABOVE};
+
+    xcb_configure_window(
+        connection_,
+        window.titleBar,
+        XCB_CONFIG_WINDOW_STACK_MODE,
+        stackMode);
+}
+
+void WindowManager::toggleMaximize(ManagedWindow& window)
+{
+    if (!isConnected()) {
+        return;
+    }
+
+    if (window.maximized) {
+        layoutFrame(
+            window,
+            window.restoreX,
+            window.restoreY,
+            window.restoreWidth,
+            window.restoreHeight);
+
+        window.maximized = false;
+        xcb_flush(connection_);
+        drawTitleBar(window.titleBar);
+        return;
+    }
+
+    const auto cookie = xcb_get_geometry(connection_, window.frame);
+    xcb_generic_error_t* error = nullptr;
+    xcb_get_geometry_reply_t* geometry =
+        xcb_get_geometry_reply(connection_, cookie, &error);
+
+    std::free(error);
+
+    if (geometry == nullptr) {
+        return;
+    }
+
+    window.restoreX = geometry->x;
+    window.restoreY = geometry->y;
+    window.restoreWidth = geometry->width;
+    window.restoreHeight = geometry->height;
+    std::free(geometry);
+
+    layoutFrame(
+        window,
+        0,
+        0,
+        screen_->width_in_pixels,
+        screen_->height_in_pixels);
+
+    window.maximized = true;
+    xcb_flush(connection_);
+    drawTitleBar(window.titleBar);
+}
+
+void WindowManager::handleMouseEvent(xcb_generic_event_t* event)
+{
+    const uint8_t type = event->response_type & 0x7f;
+
+    if (type == XCB_BUTTON_PRESS) {
+        const auto* button =
+            reinterpret_cast<xcb_button_press_event_t*>(event);
+
+        auto client = windows_.find(button->event);
+
+        if (client == windows_.end() && button->child != XCB_WINDOW_NONE) {
+            client = windows_.find(button->child);
+        }
+
+        if (client != windows_.end()) {
+            focusWindow(client->second, button->time);
+
+            xcb_allow_events(
+                connection_,
+                XCB_ALLOW_REPLAY_POINTER,
+                button->time);
+            xcb_flush(connection_);
+            return;
+        }
+
+        if (ManagedWindow* frameWindow = findByFrame(button->event)) {
+            focusWindow(*frameWindow, button->time);
+            return;
+        }
+
+        ManagedWindow* window = findByTitleBar(button->event);
+
+        if (window == nullptr) {
+            return;
+        }
+
+        focusWindow(*window, button->time);
+
+        if (button->detail != XCB_BUTTON_INDEX_1) {
+            return;
+        }
+
+        const auto barCookie =
+            xcb_get_geometry(connection_, window->titleBar);
+
+        xcb_generic_error_t* barError = nullptr;
+
+        xcb_get_geometry_reply_t* barGeometry =
+            xcb_get_geometry_reply(
+                connection_,
+                barCookie,
+                &barError
+            );
+
+        std::free(barError);
+
+        if (barGeometry == nullptr) {
+            return;
+        }
+
+        const TitleButton clicked = titleButtonAt(
+            barGeometry->width,
+            button->event_x,
+            button->event_y
+        );
+
+        std::free(barGeometry);
+
+        if (clicked != TitleButton::None) {
+            switch (clicked) {
+            case TitleButton::Minimize:
+                minimizeWindow(*window);
+                break;
+
+            case TitleButton::Maximize:
+                toggleMaximize(*window);
+                break;
+
+            case TitleButton::Close:
+                closeWindow(*window);
+                break;
+
+            case TitleButton::None:
+                break;
+            }
+
+            return;
+        }
+
+        const auto frameCookie =
+            xcb_get_geometry(connection_, window->frame);
+
+        xcb_generic_error_t* frameError = nullptr;
+
+        xcb_get_geometry_reply_t* frameGeometry =
+            xcb_get_geometry_reply(
+                connection_,
+                frameCookie,
+                &frameError
+            );
+
+        std::free(frameError);
+
+        if (frameGeometry == nullptr) {
+            return;
+        }
+
+        draggingFrame_ = window->frame;
+        dragStartX_ = button->root_x;
+        dragStartY_ = button->root_y;
+        frameStartX_ = frameGeometry->x;
+        frameStartY_ = frameGeometry->y;
+
+        std::free(frameGeometry);
+
+        xcb_grab_pointer(
+            connection_,
+            0,
+            window->titleBar,
+            XCB_EVENT_MASK_BUTTON_RELEASE |
+                XCB_EVENT_MASK_POINTER_MOTION,
+            XCB_GRAB_MODE_ASYNC,
+            XCB_GRAB_MODE_ASYNC,
+            XCB_WINDOW_NONE,
+            XCB_CURSOR_NONE,
+            XCB_CURRENT_TIME
+        );
+
+        xcb_flush(connection_);
+    } else if (
+        type == XCB_MOTION_NOTIFY &&
+        draggingFrame_ != XCB_WINDOW_NONE
+    ) {
+        const auto* motion =
+            reinterpret_cast<xcb_motion_notify_event_t*>(event);
+
+        const int16_t newX = static_cast<int16_t>(
+            frameStartX_ + (motion->root_x - dragStartX_)
+        );
+
+        const int16_t newY = static_cast<int16_t>(
+            frameStartY_ + (motion->root_y - dragStartY_)
+        );
+
+        const uint32_t values[] = {
+            packedCoordinate(newX),
+            packedCoordinate(newY)
+        };
+
+        xcb_configure_window(
+            connection_,
+            draggingFrame_,
+            XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y,
+            values
+        );
+
+        xcb_flush(connection_);
+    } else if (type == XCB_BUTTON_RELEASE) {
+        draggingFrame_ = XCB_WINDOW_NONE;
+
+        xcb_ungrab_pointer(
+            connection_,
+            XCB_CURRENT_TIME
+        );
+
+        xcb_flush(connection_);
+    }
+}
+
+
+
+void WindowManager::handleEvent(xcb_generic_event_t* event)
+{
+    const uint8_t responseType = event->response_type & 0x7f;
+
+
+    
+    if (responseType == XCB_BUTTON_PRESS ||
+        responseType == XCB_BUTTON_RELEASE ||
+        responseType == XCB_MOTION_NOTIFY) {
+        handleMouseEvent(event);
+        return;
+    }
+
+    switch (responseType) {
+
+    case XCB_MAP_REQUEST: {
+        const auto* mapEvent =
+            reinterpret_cast<xcb_map_request_event_t*>(event);
+    
+        if (!manageWindow(mapEvent->window)) {
+            xcb_map_window(connection_, mapEvent->window);
+            xcb_flush(connection_);
+        }
+    
+        break;
+    }
+
+    case XCB_DESTROY_NOTIFY: {
+        const auto* destroyEvent =
+            reinterpret_cast<xcb_destroy_notify_event_t*>(event);
+
+        const auto iterator = windows_.find(destroyEvent->window);
+
+        if (iterator != windows_.end()) {
+            if (draggingFrame_ == iterator->second.frame) {
+                draggingFrame_ = XCB_WINDOW_NONE;
+            }
+
+            if (focusedFrame_ == iterator->second.frame) {
+                clearFocus();
+            }
+
+            xcb_destroy_window(connection_, iterator->second.frame);
+            windows_.erase(iterator);
+            xcb_flush(connection_);
+        }
+
+        std::cout
+            << "Janela destruída: "
+            << destroyEvent->window << '\n';
+        break;
+    }
+
+    case XCB_CONFIGURE_REQUEST: {
+        const auto* configureEvent =
+            reinterpret_cast<xcb_configure_request_event_t*>(event);
+
+        const auto managed = windows_.find(configureEvent->window);
+
+        if (managed != windows_.end() && managed->second.maximized) {
+            break;
+        }
+
+        const uint16_t valueMask = configureEvent->value_mask;
+        uint32_t values[] = {
+            static_cast<uint32_t>(configureEvent->x),
+            static_cast<uint32_t>(configureEvent->y),
+            configureEvent->width,
+            configureEvent->height,
+            configureEvent->border_width,
+            configureEvent->sibling,
+            configureEvent->stack_mode
+        };
+
+        xcb_configure_window(
+            connection_,
+            configureEvent->window,
+            valueMask,
+            values
+        );
+
+        xcb_flush(connection_);
+
+        std::cout
+            << "Solicitação de configuração para janela: "
+            << configureEvent->window << '\n';
+        break;
+    }
+
+    case XCB_EXPOSE: {
+        const auto* exposeEvent =
+            reinterpret_cast<xcb_expose_event_t*>(event);
+    
+        if (exposeEvent->count == 0 &&
+            findByTitleBar(exposeEvent->window) != nullptr) {
+            drawTitleBar(exposeEvent->window);
+        }
+    
+        break;
+    }
+
+    default:
+        break;
+    }
+}
+</file>
+
+<file path="desktop/src/windowmanager/windowmanager.hpp">
+#pragma once
+
+#include <xcb/xcb.h>
+
+#include <unordered_map>
+
+class WindowManager final
+{
+public:
+    WindowManager() = default;
+    ~WindowManager();
+
+    WindowManager(const WindowManager&) = delete;
+    WindowManager& operator=(const WindowManager&) = delete;
+
+    bool connect();
+    bool acquireControl();
+    void run();
+    void stop();
+    void disconnect();
+
+    [[nodiscard]] bool isConnected() const noexcept;
+
+private:
+    struct ManagedWindow
+    {
+        xcb_window_t client = XCB_WINDOW_NONE;
+        xcb_window_t frame = XCB_WINDOW_NONE;
+        xcb_window_t titleBar = XCB_WINDOW_NONE;
+        
+        bool maximized = false;
+        int16_t restoreX = 0;
+        int16_t restoreY = 0;
+        uint16_t restoreWidth = 0;
+        uint16_t restoreHeight = 0;
+    };
+
+    bool manageWindow(xcb_window_t client);
+    void unmanageWindow(xcb_window_t client);
+    void handleEvent(xcb_generic_event_t* event);
+    void handleMouseEvent(xcb_generic_event_t* event);
+    void drawTitleBar(xcb_window_t titleBar);
+    ManagedWindow* findByTitleBar(xcb_window_t titleBar);
+    ManagedWindow* findByFrame(xcb_window_t frame);
+    void closeWindow(ManagedWindow& window);
+    void minimizeWindow(ManagedWindow& window);
+    void toggleMaximize(ManagedWindow& window);
+    void layoutFrame(
+        ManagedWindow& window,
+        int16_t x,
+        int16_t y,
+        uint16_t width,
+        uint16_t height);
+    void focusWindow(ManagedWindow& window, xcb_timestamp_t time);
+    void clearFocus();
+    void ensureAtoms();
+    bool clientSupportsProtocol(xcb_window_t client, xcb_atom_t protocol);
+    bool clientAcceptsClose(xcb_window_t client);
+
+    xcb_connection_t* connection_ = nullptr;
+    xcb_screen_t* screen_ = nullptr;
+    std::unordered_map<xcb_window_t, ManagedWindow> windows_;
+    xcb_window_t focusedFrame_ = XCB_WINDOW_NONE;
+    xcb_window_t draggingFrame_ = XCB_WINDOW_NONE;
+    int16_t dragStartX_ = 0;
+    int16_t dragStartY_ = 0;
+    int16_t frameStartX_ = 0;
+    int16_t frameStartY_ = 0;
+
+    xcb_atom_t wmProtocols_ = XCB_ATOM_NONE;
+    xcb_atom_t wmDeleteWindow_ = XCB_ATOM_NONE;
+    xcb_atom_t wmTakeFocus_ = XCB_ATOM_NONE;
+
+    bool controlAcquired_ = false;
+    bool running_ = false;
+};
+</file>
+
+<file path="desktop/tests/windowmanager_test.cpp">
+#include "windowmanager/windowmanager.hpp"
+
+#include <iostream>
+
+int main()
+{
+    WindowManager windowManager;
+
+    if (!windowManager.connect()) {
+        std::cerr << "Falha ao conectar ao servidor X11.\n";
+        return 1;
+    }
+
+    std::cout << "Conexão X11 estabelecida com sucesso.\n";
+
+    if (!windowManager.acquireControl()) {
+        std::cerr
+            << "Não foi possível assumir o controle da janela raiz.\n"
+            << "Outro gerenciador pode estar ativo nesta tela.\n";
+
+        return 1;
+    }
+
+    std::cout << "Controle da janela raiz adquirido com sucesso.\n";
+
+
+    windowManager.run();
+    return 0;
+}
+</file>
+
+<file path="desktop/src/desktop/desktopwindow.cpp">
+#include "desktopwindow.hpp"
+
+#include <QAction>
+#include <QColor>
+#include <QContextMenuEvent>
+#include <QFileSystemModel>
+#include <QListView>
+#include <QMenu>
+#include <QPainter>
+#include <QProcess>
+#include <QStandardPaths>
+#include <QDir>
+#include <QResizeEvent>
+#include <QPixmap>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QFileInfo>
+#include "filemanager/filemanagerwindow.hpp"
+
+#include <QDesktopServices>
+#include <QUrl>
+#include <QModelIndex>
+#include <QProcess>
+#include <QStringList>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QCoreApplication>
+#include <QDir>
+
+DesktopWindow::DesktopWindow(QWidget *parent)
+    : QWidget(parent),
+      homeDirectory_(
+          QStandardPaths::writableLocation(
+              QStandardPaths::HomeLocation
+          )
+      )
+{
+    setWindowFlags(
+        Qt::Window |
+        Qt::FramelessWindowHint
+    );
+
+    setAttribute(Qt::WA_OpaquePaintEvent);
+    setWindowTitle("Eden Desktop");
+
+    setupFileArea();
+}
+
+void DesktopWindow::setupFileArea()
+{
+    fileSystemModel_ = new QFileSystemModel(this);
+
+    fileSystemModel_->setFilter(
+        QDir::AllEntries |
+        QDir::NoDotAndDotDot
+    );
+
+    fileSystemModel_->setRootPath(homeDirectory_);
+
+    fileView_ = new QListView(this);
+
+    fileView_->setModel(fileSystemModel_);
+    fileView_->setRootIndex(
+        fileSystemModel_->index(homeDirectory_)
+    );
+
+    fileView_->setViewMode(QListView::IconMode);
+    fileView_->setFlow(QListView::TopToBottom);
+    fileView_->setMovement(QListView::Snap);
+    fileView_->setResizeMode(QListView::Adjust);
+    fileView_->setWrapping(true);
+
+    fileView_->setIconSize(QSize(48, 48));
+    fileView_->setGridSize(QSize(104, 92));
+    fileView_->setSpacing(8);
+
+    fileView_->setWordWrap(true);
+    fileView_->setTextElideMode(Qt::ElideMiddle);
+    fileView_->setEditTriggers(
+        QAbstractItemView::NoEditTriggers
+    );
+
+    fileView_->setContextMenuPolicy(
+        Qt::CustomContextMenu
+    );
+
+    fileView_->setStyleSheet(R"(
+        QListView {
+            background: transparent;
+            border: none;
+            color: #FFFFFF;
+            outline: none;
+            padding: 12px;
+        }
+
+        QListView::item {
+            background: transparent;
+            border-radius: 6px;
+            padding: 4px;
+        }
+
+        QListView::item:selected {
+            background: rgba(100, 150, 220, 100);
+        }
+
+        QListView::item:hover {
+            background: rgba(255, 255, 255, 25);
+        }
+    )");
+
+    connect(
+        fileView_,
+        &QListView::customContextMenuRequested,
+        this,
+        [this](const QPoint &position) {
+            showDesktopContextMenu(
+                fileView_->viewport()->mapToGlobal(position)
+            );
+        }
+    );
+
+
+    connect(
+        fileView_,
+        &QListView::doubleClicked,
+        this,
+        [this](const QModelIndex &index) {
+            openItem(index);
+        }
+    );
+
+
+    fileView_->setGeometry(rect());
+}
+
+
+
+void DesktopWindow::openItem(const QModelIndex &index)
+{
+    const QString path = fileSystemModel_->filePath(index);
+    const QFileInfo info(path);
+
+    if (info.isDir()) {
+        const QString executable = QDir(
+            QCoreApplication::applicationDirPath()
+        ).filePath("edens");
+
+        const bool started = QProcess::startDetached(
+            executable,
+            QStringList{path}
+        );
+
+        if (!started) {
+            qWarning() << "Não foi possível abrir o Eden's Manager:"
+                       << executable
+                       << path;
+        }
+
+        return;
+    }
+
+    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+}
+
+
+
+void DesktopWindow::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    fileView_->setGeometry(rect());
+}
+
+
+void DesktopWindow::paintEvent(QPaintEvent *event)
+{
+    Q_UNUSED(event);
+
+    QPainter painter(this);
+
+    const QPixmap wallpaper(
+        "assets/wallpapers/default.jpg"
+    );
+
+    if (wallpaper.isNull()) {
+        painter.fillRect(rect(), QColor("#20252D"));
+        return;
+    }
+
+    const QSize scaledSize =
+        wallpaper.size().scaled(
+            size(),
+            Qt::KeepAspectRatioByExpanding
+        );
+
+    const QPixmap scaledWallpaper =
+        wallpaper.scaled(
+            scaledSize,
+            Qt::KeepAspectRatio,
+            Qt::SmoothTransformation
+        );
+
+    const QPoint position(
+        (width() - scaledWallpaper.width()) / 2,
+        (height() - scaledWallpaper.height()) / 2
+    );
+
+    painter.drawPixmap(position, scaledWallpaper);
+}
+
+
+void DesktopWindow::contextMenuEvent(QContextMenuEvent *event)
+{
+    showDesktopContextMenu(event->globalPos());
+}
+
+void DesktopWindow::showDesktopContextMenu(
+    const QPoint &globalPosition
+)
+{
+    QMenu menu(this);
+
+    QAction *refreshAction =
+        menu.addAction("Atualizar");
+
+    QAction *terminalAction =
+        menu.addAction("Abrir terminal");
+
+    menu.addSeparator();
+
+    QAction *settingsAction =
+        menu.addAction("Configurações do Eden");
+
+    QAction *selectedAction =
+        menu.exec(globalPosition);
+
+    if (selectedAction == refreshAction) {
+        fileSystemModel_->setRootPath(QString());
+
+        fileSystemModel_->setRootPath(homeDirectory_);
+
+        fileView_->setRootIndex(
+            fileSystemModel_->index(homeDirectory_)
+        );
+
+        return;
+    }
+
+    if (selectedAction == terminalAction) {
+        const QStringList terminals = {
+            "x-terminal-emulator",
+            "gnome-terminal",
+            "mate-terminal",
+            "xfce4-terminal",
+            "xterm"
+        };
+
+        for (const QString &terminal : terminals) {
+            const QString executable =
+                QStandardPaths::findExecutable(terminal);
+
+            if (!executable.isEmpty() &&
+                QProcess::startDetached(executable)) {
+                return;
+            }
+        }
+
+        return;
+    }
+
+    if (selectedAction == settingsAction) {
+        // Implementaremos as configurações posteriormente.
+    }
+}
+
+void DesktopWindow::navigateToDirectory(const QString &path)
+{
+    const QModelIndex index =
+        fileSystemModel_->index(path);
+
+    if (!index.isValid()) {
+        return;
+    }
+
+    directoryHistory_.append(
+        fileSystemModel_->filePath(fileView_->rootIndex())
+    );
+
+    fileView_->setRootIndex(index);
+}
+
+void DesktopWindow::navigateBack()
+{
+    if (directoryHistory_.isEmpty()) {
+        return;
+    }
+
+    const QString previousPath =
+        directoryHistory_.takeLast();
+
+    const QModelIndex index =
+        fileSystemModel_->index(previousPath);
+
+    if (index.isValid()) {
+        fileView_->setRootIndex(index);
+    }
+}
+</file>
+
+<file path="desktop/src/desktop/desktopwindow.hpp">
+#pragma once
+
+#include <QWidget>
+#include <QString>
+#include <QStringList>
+
+class QContextMenuEvent;
+class QFileSystemModel;
+class QListView;
+class QModelIndex;
+
+class DesktopWindow final : public QWidget
+{
+public:
+    explicit DesktopWindow(QWidget *parent = nullptr);
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+
+private:
+    void setupFileArea();
+    void openItem(const QModelIndex &index);
+    void showDesktopContextMenu(const QPoint &globalPosition);
+    void navigateToDirectory(const QString &path);
+    void navigateBack();
+    
+    QString homeDirectory_;
+    QStringList directoryHistory_;
+
+    QListView *fileView_ = nullptr;
+    QFileSystemModel *fileSystemModel_ = nullptr;
+};
+</file>
+
+<file path="desktop/src/filemanager/filemanagerwindow.cpp">
+#include "filemanagerwindow.hpp"
+
+#include <QAction>
+#include <QDir>
+#include <QFileInfo>
+#include <QFileSystemModel>
+#include <QHBoxLayout>
+#include <QLineEdit>
+#include <QListView>
+#include <QStandardPaths>
+#include <QToolBar>
+#include <QVBoxLayout>
+#include <QWidget>
+
+
+FileManagerWindow::FileManagerWindow(
+    const QString &initialDirectory,
+    QWidget *parent
+)
+    : QMainWindow(parent)
+{
+    setupUi();
+
+    const QString directory = initialDirectory.isEmpty()
+        ? QStandardPaths::writableLocation(
+              QStandardPaths::HomeLocation)
+        : initialDirectory;
+
+    navigateTo(directory);
+}
+
+void FileManagerWindow::setupUi()
+{
+    setWindowTitle("Eden File Manager");
+    resize(900, 600);
+
+    toolBar_ = addToolBar("Navegação");
+    toolBar_->setMovable(false);
+
+    QAction *backAction = toolBar_->addAction("Voltar");
+    QAction *forwardAction = toolBar_->addAction("Avançar");
+    QAction *homeAction = toolBar_->addAction("Pasta pessoal");
+
+    connect(backAction, &QAction::triggered,
+            this, [this] { navigateBack(); });
+
+    connect(forwardAction, &QAction::triggered,
+            this, [this] { navigateForward(); });
+
+    connect(homeAction, &QAction::triggered,
+            this, [this] { navigateHome(); });
+
+    locationEdit_ = new QLineEdit(this);
+    locationEdit_->setPlaceholderText("Caminho da pasta");
+    toolBar_->addWidget(locationEdit_);
+
+    connect(locationEdit_, &QLineEdit::returnPressed,
+            this, [this] {
+                navigateTo(locationEdit_->text());
+            });
+
+    auto *centralWidget = new QWidget(this);
+    auto *layout = new QVBoxLayout(centralWidget);
+    layout->setContentsMargins(0, 0, 0, 0);
+
+    fileSystemModel_ = new QFileSystemModel(this);
+    fileSystemModel_->setFilter(
+        QDir::AllEntries | QDir::NoDotAndDotDot
+    );
+
+    fileSystemModel_->setRootPath(QDir::rootPath());
+
+    fileView_ = new QListView(centralWidget);
+    fileView_->setModel(fileSystemModel_);
+    fileView_->setViewMode(QListView::IconMode);
+    fileView_->setResizeMode(QListView::Adjust);
+    fileView_->setMovement(QListView::Static);
+    fileView_->setIconSize(QSize(48, 48));
+    fileView_->setGridSize(QSize(110, 100));
+
+    layout->addWidget(fileView_);
+    setCentralWidget(centralWidget);
+
+    connect(fileView_, &QListView::doubleClicked,
+            this, [this](const QModelIndex &index) {
+                const QString path =
+                    fileSystemModel_->filePath(index);
+
+                const QFileInfo info(path);
+
+                if (info.isDir()) {
+                    navigateTo(path);
+                }
+            });
+}
+
+void FileManagerWindow::navigateTo(const QString &path)
+{
+    const QFileInfo info(path);
+    if (!info.exists() || !info.isDir()) {
+        locationEdit_->setText(currentDirectory_);
+        return;
+    }
+
+    const QString absolutePath = info.absoluteFilePath();
+
+    if (absolutePath == currentDirectory_) {
+        locationEdit_->setText(currentDirectory_);
+        return;
+    }
+
+    if (historyIndex_ + 1 < history_.size()) {
+        history_.erase(
+            history_.begin() + historyIndex_ + 1,
+            history_.end()
+        );
+    }
+
+    history_.append(absolutePath);
+    historyIndex_ = history_.size() - 1;
+
+    currentDirectory_ = absolutePath;
+
+    fileView_->setRootIndex(
+        fileSystemModel_->index(currentDirectory_)
+    );
+
+    locationEdit_->setText(currentDirectory_);
+    setWindowTitle(
+        QFileInfo(currentDirectory_).fileName().isEmpty()
+            ? currentDirectory_
+            : QFileInfo(currentDirectory_).fileName()
+              + " — Eden File Manager"
+    );
+
+    updateNavigationActions();
+}
+
+void FileManagerWindow::navigateBack()
+{
+    if (historyIndex_ <= 0) {
+        return;
+    }
+
+    --historyIndex_;
+    currentDirectory_ = history_.at(historyIndex_);
+
+    fileView_->setRootIndex(
+        fileSystemModel_->index(currentDirectory_)
+    );
+
+    locationEdit_->setText(currentDirectory_);
+    updateNavigationActions();
+}
+
+void FileManagerWindow::navigateForward()
+{
+    if (historyIndex_ + 1 >= history_.size()) {
+        return;
+    }
+
+    ++historyIndex_;
+    currentDirectory_ = history_.at(historyIndex_);
+
+    fileView_->setRootIndex(
+        fileSystemModel_->index(currentDirectory_)
+    );
+
+    locationEdit_->setText(currentDirectory_);
+    updateNavigationActions();
+}
+
+void FileManagerWindow::navigateHome()
+{
+    navigateTo(
+        QStandardPaths::writableLocation(
+            QStandardPaths::HomeLocation
+        )
+    );
+}
+
+void FileManagerWindow::updateNavigationActions()
+{
+    const QList<QAction *> actions = toolBar_->actions();
+
+    if (actions.size() >= 3) {
+        actions.at(0)->setEnabled(historyIndex_ > 0);
+        actions.at(1)->setEnabled(
+            historyIndex_ + 1 < history_.size()
+        );
+    }
+}
+</file>
+
+<file path="desktop/src/filemanager/filemanagerwindow.hpp">
+#pragma once
+
+#include <QMainWindow>
+#include <QString>
+
+class QFileSystemModel;
+class QLineEdit;
+class QListView;
+class QToolBar;
+class QModelIndex; 
+
+class FileManagerWindow final : public QMainWindow
+{
+public:
+    explicit FileManagerWindow(
+        const QString &initialDirectory = QString(),
+        QWidget *parent = nullptr
+    );
+
+private:
+    void setupUi();
+    void navigateTo(const QString &path);
+    void navigateBack();
+    void navigateForward();
+    void navigateHome();
+    void updateNavigationActions();
+    void openItem(const QModelIndex &index);
+
+    QFileSystemModel *fileSystemModel_ = nullptr;
+    QListView *fileView_ = nullptr;
+    QLineEdit *locationEdit_ = nullptr;
+    QToolBar *toolBar_ = nullptr;
+
+    QString currentDirectory_;
+    QStringList history_;
+    int historyIndex_ = -1;
+};
+</file>
+
+<file path="desktop/src/main.cpp">
+#include <QApplication>
+#include <QScreen>
+#include <QWidget>
+#include "desktop/desktopwindow.hpp"
+#include <QPainter>
+#include <QColor>
+#include <QContextMenuEvent>
+#include <QMenu>
+#include <QAction>
+#include <QGuiApplication>
+
+#include <QtGui/qguiapplication_platform.h>
+#include <xcb/xcb.h>
+
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <QProcess>
+#include <QFileInfo>
+#include "filemanager/filemanagerwindow.hpp"
+
+static bool setDesktopWindowType(xcb_window_t window)
+{
+    auto *native =
+        qGuiApp->nativeInterface<
+            QNativeInterface::QX11Application
+        >();
+
+    if (native == nullptr) {
+        return false;
+    }
+
+    xcb_connection_t *connection = native->connection();
+
+    if (connection == nullptr ||
+        xcb_connection_has_error(connection)) {
+        return false;
+    }
+
+    const char *propertyName = "_NET_WM_WINDOW_TYPE";
+    const char *typeName = "_NET_WM_WINDOW_TYPE_DESKTOP";
+
+    auto propertyCookie = xcb_intern_atom(
+        connection,
+        0,
+        static_cast<uint16_t>(std::strlen(propertyName)),
+        propertyName
+    );
+
+    auto typeCookie = xcb_intern_atom(
+        connection,
+        0,
+        static_cast<uint16_t>(std::strlen(typeName)),
+        typeName
+    );
+
+    auto *propertyReply = xcb_intern_atom_reply(
+        connection,
+        propertyCookie,
+        nullptr
+    );
+
+    auto *typeReply = xcb_intern_atom_reply(
+        connection,
+        typeCookie,
+        nullptr
+    );
+
+    if (propertyReply == nullptr || typeReply == nullptr) {
+        std::free(propertyReply);
+        std::free(typeReply);
+        return false;
+    }
+
+    xcb_change_property(
+        connection,
+        XCB_PROP_MODE_REPLACE,
+        window,
+        propertyReply->atom,
+        XCB_ATOM_ATOM,
+        32,
+        1,
+        &typeReply->atom
+    );
+
+    xcb_flush(connection);
+
+    std::free(propertyReply);
+    std::free(typeReply);
+
+    return !xcb_connection_has_error(connection);
+}
+
+
+int main(int argc, char *argv[])
+{
+    QApplication app(argc, argv);
+
+    DesktopWindow desktop;
+
+    QScreen *screen = QApplication::primaryScreen();
+
+    if (screen == nullptr) {
+        return 1;
+    }
+
+    desktop.setGeometry(screen->geometry());
+
+    // Definir o tipo da janela como desktop
+    if (!setDesktopWindowType(desktop.winId())) {
+        return 1;
+    }
+    desktop.show();
+    return app.exec();
+}
+</file>
+
+<file path="filemanager/src/processors/directories.c">
+#define _DEFAULT_SOURCE
+
+#include "directories.h"
+
+#include <dirent.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+
+static bool should_ignore_entry(const char *name)
+{
+    return strcmp(name, ".") == 0 ||
+           strcmp(name, "..") == 0;
+}
+
+static EdensDirectoryEntryType get_entry_type(unsigned char type)
+{
+    switch (type) {
+        case DT_REG:
+            return EDENS_ENTRY_FILE;
+
+        case DT_DIR:
+            return EDENS_ENTRY_DIRECTORY;
+
+        case DT_LNK:
+            return EDENS_ENTRY_SYMLINK;
+
+        default:
+            return EDENS_ENTRY_UNKNOWN;
+    }
+}
+
+void free_directory_entries(EdensDirectoryEntries *entries)
+{
+    if (entries == NULL) {
+        return;
+    }
+
+    for (size_t i = 0; i < entries->count; i++) {
+        free(entries->entries[i].name);
+    }
+
+    free(entries->entries);
+
+    entries->entries = NULL;
+    entries->count = 0;
+}
+
+int read_directory(const char *path, EdensDirectoryEntries *result)
+{
+    if (path == NULL || result == NULL) {
+        return EINVAL;
+    }
+
+    result->entries = NULL;
+    result->count = 0;
+
+    DIR *directory = opendir(path);
+
+    if (directory == NULL) {
+        return errno;
+    }
+
+    size_t capacity = 16;
+
+    result->entries = malloc(
+        capacity * sizeof(EdensDirectoryEntry)
+    );
+
+    if (result->entries == NULL) {
+        closedir(directory);
+        return ENOMEM;
+    }
+
+    struct dirent *entry;
+
+    errno = 0;
+
+    while ((entry = readdir(directory)) != NULL) {
+        if (should_ignore_entry(entry->d_name)) {
+            continue;
+        }
+
+        if (result->count == capacity) {
+            capacity *= 2;
+
+            EdensDirectoryEntry *new_entries = realloc(
+                result->entries,
+                capacity * sizeof(EdensDirectoryEntry)
+            );
+
+            if (new_entries == NULL) {
+                closedir(directory);
+                free_directory_entries(result);
+                return ENOMEM;
+            }
+
+            result->entries = new_entries;
+        }
+
+        char *name = strdup(entry->d_name);
+
+        if (name == NULL) {
+            closedir(directory);
+            free_directory_entries(result);
+            return ENOMEM;
+        }
+
+        result->entries[result->count].name = name;
+        result->entries[result->count].type =
+            get_entry_type(entry->d_type);
+
+        result->count++;
+    }
+
+    int read_error = errno;
+    closedir(directory);
+
+    if (read_error != 0) {
+        free_directory_entries(result);
+        return read_error;
+    }
+
+    return 0;
+}
+</file>
+
+<file path="filemanager/src/processors/directories.h">
+#ifndef EDENS_DIRECTORIES_H
+#define EDENS_DIRECTORIES_H
+
+#include <stddef.h>
+
+typedef enum {
+    EDENS_ENTRY_FILE,
+    EDENS_ENTRY_DIRECTORY,
+    EDENS_ENTRY_SYMLINK,
+    EDENS_ENTRY_UNKNOWN
+} EdensDirectoryEntryType;
+
+typedef struct {
+    char *name;
+    EdensDirectoryEntryType type;
+} EdensDirectoryEntry;
+
+typedef struct {
+    EdensDirectoryEntry *entries;
+    size_t count;
+} EdensDirectoryEntries;
+
+int read_directory(
+    const char *path,
+    EdensDirectoryEntries *result
+);
+
+void free_directory_entries(
+    EdensDirectoryEntries *entries
+);
+
+#endif
+</file>
+
+<file path="filemanager/src/ui/window/header_bar.c">
+#include <gtk/gtk.h>
+
+void set_header_bar_style(const char *hexColor) 
+{
+    GtkCssProvider *provider = gtk_css_provider_new();
+
+    gchar *css = g_strdup_printf(
+        /* Estilo da Headerbar */
+        "headerbar {"
+        "   background-color: %s;"
+        "   background-image: none;"
+        "   color: #ffffff;"
+        "   border-width: 1px;"
+        "   border-color:rgb(65, 66, 71);"
+        "   box-shadow: none;"
+        "}"
+        "#explorer-toolbar {"
+        "   background-color: %s;"
+        "   background-image: none;"
+        "   color: #ffffff;"
+        "   border-width: 1px;"
+        "   border-color:rgb(65, 66, 71);"
+        "   box-shadow: none;"
+        "   margin: 0;"
+        "   padding: 4px 6px;"
+        "   padding-top: 8px;"
+        "   padding-bottom: 8px;"
+        "}"
+        "#explorer-toolbar button {"
+        "   background-color:rgb(65, 66, 71);"
+        "   background-image: none;"
+        "   border-width: 0;"
+        "   box-shadow: none;"
+        "   padding: 4px;"
+        "}"
+        "#explorer-toolbar button:hover {"
+        "   background-color: rgba(65, 66, 71, 0.55);"
+        "}"
+        "#scrolledwindow {"
+        "   background-color: rgb(65, 66, 71);"
+        "   border-width: 0;"
+        "}"
+        "#explorer-toolbar entry {"
+        "   background-color:rgb(65, 66, 71);"
+        "   background-image: none;"
+        "   border-width: 0;"
+        "   box-shadow: none;"
+        "   padding: 4px;"
+        "   color: #ffffff;"
+        "}"
+        "#file-item-label {"
+        "   color: #ffffff;"
+        "}"
+        "#action-bar {"
+        "   background-color: #252630;"
+        "   color: #ffffff;"
+        "   min-height: 32px;"
+        "}"
+        "#main-box {"
+        "   background-color: rgb(65, 66, 71);"
+        "   border-width: 0;"
+        "}"
+        "headerbar, titlebar {"
+        "   box-shadow: none;"
+        "   border-width: 1px;"
+        "   border-color:rgb(65, 66, 71);"
+        "}"
+        /* Estilo da Barra de Menu Principal (MenuBar Superior) */
+        "menubar {"
+        "   background-color: %s;"
+        "   color: #ffffff;"
+        "   border-width: 1px;"
+        "   border-color:rgb(65, 66, 71);"
+        "   box-shadow: none;"
+        "}"
+        "menubar > menuitem {"
+        "   color: #ffffff;"
+        "}"
+        "menubar > menuitem:hover {"
+        "   background-color: #3e4059;"
+        "}"
+        /* Estilo dos Popups / Submenus */
+        "popovercontents, popover, menu {"
+        "   background-color: #252630;"
+        "   color: #ffffff;"
+        "   border: 1px solid #3b3d52;"
+        "}"
+        /* Destaque ao passar o rato nos itens */
+        "popover modelbutton:hover, menuitem:hover {"
+        "   background-color: #3e4059;"
+        "   color: #ffffff;"
+        "}", 
+        hexColor, hexColor, hexColor);
+    gtk_css_provider_load_from_data(provider, css, -1, NULL);
+
+    gtk_style_context_add_provider_for_screen(
+        gdk_screen_get_default(),
+        GTK_STYLE_PROVIDER(provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+    );
+    
+    g_free(css);
+    g_object_unref(provider);
+
+}
+
+
+GtkWidget *create_header_bar()
+{
+    GtkWidget *header_bar = gtk_header_bar_new();
+    gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(header_bar), TRUE);
+    gtk_header_bar_set_title(GTK_HEADER_BAR(header_bar), "Eden's Explorer");
+    set_header_bar_style("#2E2D2D");
+    
+    return header_bar;
+}
+</file>
+
+<file path="filemanager/src/ui/window/menu_actions.c">
+#include "menu.h"
+
+void menu_action_about(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)parameter;
+    (void)user_data;
+
+    g_print ("Action: %s\n", g_action_get_name(G_ACTION(action)));
+}
+
+
+void menu_action_files(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)parameter;
+    (void)user_data;
+
+    g_print ("Action: %s\n", g_action_get_name(G_ACTION(action)));
+}
+
+void menu_action_new(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)parameter;
+    (void)user_data;
+
+    g_print ("Action: %s\n", g_action_get_name(G_ACTION(action)));
+}
+
+void menu_action_open(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)parameter;
+    (void)user_data;
+
+    g_print ("Action: %s\n", g_action_get_name(G_ACTION(action)));
+}
+
+void menu_action_save(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)parameter;
+    (void)user_data;
+
+    g_print ("Action: %s\n", g_action_get_name(G_ACTION(action)));
+}
+
+void menu_action_save_as(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)parameter;
+    (void)user_data;
+
+    g_print ("Action: %s\n", g_action_get_name(G_ACTION(action)));
+}
+
+void menu_action_close(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)parameter;
+    (void)user_data;
+
+    g_print ("Action: %s\n", g_action_get_name(G_ACTION(action)));
+}
+</file>
+
+<file path="filemanager/src/ui/window/menu_actions.h">
+#ifndef MENU_ACTIONS_H
+#define MENU_ACTIONS_H
+
+#include "menu.h"
+
+void menu_action_about(GSimpleAction *action, GVariant *parameter, gpointer user_data);
+void menu_action_files(GSimpleAction *action, GVariant *parameter, gpointer user_data);
+void menu_action_new(GSimpleAction *action, GVariant *parameter, gpointer user_data);
+void menu_action_open(GSimpleAction *action, GVariant *parameter, gpointer user_data);
+void menu_action_save(GSimpleAction *action, GVariant *parameter, gpointer user_data);
+void menu_action_save_as(GSimpleAction *action, GVariant *parameter, gpointer user_data);
+void menu_action_close(GSimpleAction *action, GVariant *parameter, gpointer user_data);
+#endif
+</file>
+
+<file path="filemanager/src/ui/window/menu.c">
+#include "menu.h"
+#include "menu_actions.h"
+
+typedef struct MenuAction {
+    char *label;
+    char *icon;
+    char *menu_name;
+    char *detailed_name;
+    void (*callback)(GSimpleAction *action, GVariant *parameter, gpointer user_data);
+    char *hotkey;
+    struct MenuAction *sub_menu;
+} MenuAction;
+
+static MenuAction file_menu[] = {
+    {"Novo", "document-new", "new", "app.new", menu_action_new, "<Control>n", NULL},
+    {"Abrir", "document-open", "open", "app.open", menu_action_open, "<Control>o", NULL},
+    {"Salvar", "document-save", "save", "app.save", menu_action_save, "<Control>s", NULL},
+    {"Salvar Como", "document-save-as", "save-as", "app.save-as", menu_action_save_as, "<Control>Shift+S", NULL},
+    {"Fechar",   "window-close", "close", "app.close", menu_action_close, "<Control>w", NULL},
+    {NULL,  NULL, NULL, NULL, NULL, NULL, NULL},
+};
+
+MenuAction menu_actions[] = {
+    {"Arquivos", NULL, "files", "app.files", menu_action_files, "<Control>f", file_menu},
+    {"Sobre",  NULL, "about", "app.about", menu_action_about, "<Control>a", NULL},
+};
+
+void set_hotkey(GtkApplication *app, char *menu_name, char *hotkey)
+{
+    gchar detailed_name[64];
+
+    g_snprintf(detailed_name, sizeof(detailed_name), "app.%s", menu_name);
+    const char *accels[] = {hotkey, NULL};
+    gtk_application_set_accels_for_action(app, detailed_name, accels);
+}
+
+static size_t menu_length(MenuAction *actions)
+{
+    size_t count = 0;
+
+    while (actions[count].label != NULL) {
+        count++;
+    }
+
+    return count;
+}
+
+static void register_action_list(GtkApplication *app, MenuAction *actions, size_t count)
+{
+    for (size_t i = 0; i < count; i++) {
+        GSimpleAction *action = g_simple_action_new(actions[i].menu_name, NULL);
+
+        g_signal_connect(action, "activate", G_CALLBACK(actions[i].callback), NULL);
+        g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(action));
+        g_object_unref(action);
+
+        if (actions[i].hotkey != NULL) {
+            set_hotkey(app, actions[i].menu_name, actions[i].hotkey);
+        }
+
+        if (actions[i].sub_menu != NULL) {
+            register_action_list(app, actions[i].sub_menu, menu_length(actions[i].sub_menu));
+        }
+    }
+}
+
+void register_actions(GtkApplication *app)
+{
+    register_action_list(app, menu_actions, sizeof(menu_actions) / sizeof(menu_actions[0]));
+}
+
+GtkWidget *create_menu_button(GMenu *menu_model)
+{
+    GtkWidget *menu_button = gtk_menu_button_new();
+    GtkWidget *menu_icon = gtk_image_new_from_icon_name("open-menu-symbolic", GTK_ICON_SIZE_BUTTON);
+
+    gtk_button_set_image(GTK_BUTTON(menu_button), menu_icon);
+    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_button), G_MENU_MODEL(menu_model));
+
+    return menu_button;
+}
+
+static void addIcon(GMenuItem *item, const char *iconName)
+{
+    if (iconName == NULL) {
+        return;
+    }
+
+    GIcon *icon = g_themed_icon_new(iconName);
+    g_menu_item_set_icon(item, icon);
+    g_object_unref(icon);
+}   
+
+static GMenu *build_menu(MenuAction *actions, size_t count)
+{
+    GMenu *menu = g_menu_new(); 
+
+    for (size_t i = 0; i < count; i++) {
+
+        const char *action = actions[i].sub_menu != NULL ? NULL : actions[i].detailed_name;
+        GMenuItem *item = g_menu_item_new(actions[i].label, action);
+
+        addIcon(item, actions[i].icon);
+
+        if (actions[i].sub_menu != NULL) {
+            GMenu *sub_menu = build_menu(actions[i].sub_menu, menu_length(actions[i].sub_menu));
+            g_menu_item_set_submenu(item, G_MENU_MODEL(sub_menu));
+            g_object_unref(sub_menu);
+        }
+
+        g_menu_append_item(menu, item);
+        g_object_unref(item);
+    }
+
+    return menu;
+}
+
+GMenu *create_menu(void)
+{
+    return build_menu(menu_actions, sizeof(menu_actions) / sizeof(menu_actions[0]));
+}
+</file>
+
+<file path="filemanager/src/ui/window/menu.h">
+#ifndef MENU_H
+#define MENU_H
+
+#include <gtk/gtk.h>
+
+void register_actions(GtkApplication *app);
+GtkWidget *create_menu_button(GMenu *menu_model);
+GMenu *create_menu(void);
+
+#endif
+</file>
+
+<file path="filemanager/src/ui/window/window.c">
+#include <gtk/gtk.h>
+#include "header_bar.c"
+#include "window.h"
+#include "menu.h"
+
+static void set_window_properties(GtkWidget *window)
+{
+    gtk_window_set_resizable(GTK_WINDOW(window), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(window), 800, 600);
+    gtk_window_unmaximize(GTK_WINDOW(window));
+}
+
+GtkWidget *build_window(GtkApplication *app)
+{
+    GtkWidget *window = gtk_application_window_new(app);
+    set_window_properties(window);
+
+    // header bar
+    GtkWidget *header_bar = create_header_bar();
+    gtk_window_set_titlebar(GTK_WINDOW(window), header_bar);
+
+    // menu
+    register_actions(app);
+
+    GMenu *menu = create_menu();
+    gtk_application_set_menubar(GTK_APPLICATION(app), G_MENU_MODEL(menu));
+    g_object_unref(menu);
+    
+    gtk_application_window_set_show_menubar(GTK_APPLICATION_WINDOW(window), TRUE);
+
+    return window;
+}
+</file>
+
+<file path="filemanager/src/ui/window/window.h">
+#ifndef WINDOW_H
+#define WINDOW_H
+
+#include <gtk/gtk.h>
+
+GtkWidget *build_window(GtkApplication *app);
+
+#endif
+</file>
+
+<file path="filemanager/src/ui/actionBar.c">
+#include <gtk/gtk.h>
+
+GtkWidget *build_action_bar(void)
+{
+    GtkWidget *action_bar = gtk_action_bar_new();
+    GtkWidget *status = gtk_label_new("0 itens");
+
+    gtk_widget_set_name(action_bar, "action-bar");
+    gtk_action_bar_pack_start(GTK_ACTION_BAR(action_bar), status);
+
+    return action_bar;
+}
+</file>
+
+<file path="filemanager/src/ui/actionBar.h">
+#ifndef ACTION_BAR_H
+#define ACTION_BAR_H
+
+#include <gtk/gtk.h>
+
+GtkWidget *build_action_bar(void);
+
+#endif
+</file>
+
+<file path="filemanager/src/ui/filearea.c">
+#include <gtk/gtk.h>
+#include "filearea.h"
+#include "fileitem.h"
+
+GtkWidget *build_file_area(void)
+{
+    GtkWidget *file_area = gtk_flow_box_new();
+
+    gtk_flow_box_set_row_spacing(
+        GTK_FLOW_BOX(file_area),
+        1
+    );
+
+    gtk_flow_box_set_column_spacing(
+        GTK_FLOW_BOX(file_area),
+        1
+    );
+
+    gtk_flow_box_set_selection_mode(
+        GTK_FLOW_BOX(file_area),
+        GTK_SELECTION_NONE
+    );
+
+    return file_area;
+}
+
+void populate_file_area(
+    GtkWidget *file_area,
+    EdensDirectoryEntries *entries
+)
+{
+    for (size_t i = 0; i < entries->count; i++) {
+        GtkWidget *item = build_file_item(
+            &entries->entries[i]
+        );
+
+        gtk_flow_box_insert(
+            GTK_FLOW_BOX(file_area),
+            item,
+            -1
+        );
+    }
+}
+</file>
+
+<file path="filemanager/src/ui/filearea.h">
+#ifndef FILEAREA_H
+#define FILEAREA_H
+
+#include <gtk/gtk.h>
+#include "processors/directories.h"
+
+GtkWidget *build_file_area(void);
+
+void populate_file_area(
+    GtkWidget *file_area,
+    EdensDirectoryEntries *entries
+);
+
+#endif
+</file>
+
+<file path="filemanager/src/ui/fileitem.c">
+#include <gtk/gtk.h>
+#include "fileitem.h"
+
+enum { FILE_ICON_SIZE = 64 };
+
+static int label_width_chars(GtkWidget *label)
+{
+    PangoLayout *layout = gtk_widget_create_pango_layout(label, "n");
+    int char_width = 1;
+
+    pango_layout_get_pixel_size(layout, &char_width, NULL);
+    g_object_unref(layout);
+
+    if (char_width < 1) {
+        char_width = 1;
+    }
+
+    return FILE_ICON_SIZE / char_width;
+}
+
+GtkWidget *build_file_item(EdensDirectoryEntry *entry)
+{
+    GtkWidget *item = gtk_box_new(
+        GTK_ORIENTATION_VERTICAL,
+        0
+    );
+
+    GtkWidget *file_icon;
+
+    if (entry->type == EDENS_ENTRY_DIRECTORY) {
+        file_icon = gtk_image_new_from_icon_name(
+            "folder",
+            GTK_ICON_SIZE_BUTTON
+        );
+    } else {
+        file_icon = gtk_image_new_from_icon_name(
+            "text-x-generic",
+            GTK_ICON_SIZE_BUTTON
+        );
+    }
+
+    gtk_image_set_pixel_size(GTK_IMAGE(file_icon), FILE_ICON_SIZE);
+
+    GtkWidget *file_label = gtk_label_new(entry->name);
+
+    gtk_widget_set_name(file_label, "file-item-label");
+    
+    int width_chars = label_width_chars(file_label);
+
+    gtk_label_set_max_width_chars(GTK_LABEL(file_label), width_chars);
+    gtk_label_set_ellipsize(GTK_LABEL(file_label), PANGO_ELLIPSIZE_END);
+    gtk_label_set_xalign(GTK_LABEL(file_label), 0.5);
+    gtk_widget_set_halign(file_label, GTK_ALIGN_CENTER);
+
+    gtk_box_pack_start(
+        GTK_BOX(item),
+        file_icon,
+        FALSE,
+        FALSE,
+        0
+    );
+
+    gtk_box_pack_start(
+        GTK_BOX(item),
+        file_label,
+        FALSE,
+        FALSE,
+        0
+    );
+    
+
+    return item;
+}
+</file>
+
+<file path="filemanager/src/ui/fileitem.h">
+#ifndef FILEITEM_H
+#define FILEITEM_H
+
+#include <gtk/gtk.h>
+#include "processors/directories.h"
+
+GtkWidget *build_file_item(EdensDirectoryEntry *entry);
+
+#endif
+</file>
+
+<file path="filemanager/src/ui/mainbox.c">
+#include <gtk/gtk.h>
+#include "mainbox.h"
+
+GtkWidget *build_main_box(void)
+{
+    GtkWidget *main_box = gtk_box_new(
+        GTK_ORIENTATION_VERTICAL,
+        0
+    );
+
+    gtk_widget_set_name(main_box, "main-box");
+
+    return main_box;
+}
+</file>
+
+<file path="filemanager/src/ui/mainbox.h">
+#ifndef MAINBOX_H
+#define MAINBOX_H
+
+#include <gtk/gtk.h>
+
+GtkWidget *build_main_box(void);
+
+#endif
+</file>
+
+<file path="filemanager/src/ui/scrolledwindow.c">
+#include <gtk/gtk.h>
+#include "scrolledwindow.h"
+
+GtkWidget *build_scrolled_window(void)
+{
+    GtkWidget *scrolled_window = gtk_scrolled_window_new(NULL, NULL);
+
+    gtk_widget_set_vexpand(scrolled_window, TRUE);
+    gtk_widget_set_hexpand(scrolled_window, TRUE);
+    
+    gtk_scrolled_window_set_policy(
+        GTK_SCROLLED_WINDOW(scrolled_window),
+        GTK_POLICY_AUTOMATIC,
+        GTK_POLICY_AUTOMATIC
+    );
+
+    return scrolled_window;
+}
+</file>
+
+<file path="filemanager/src/ui/scrolledwindow.h">
+#ifndef SCROLLEDWINDOW_H
+#define SCROLLEDWINDOW_H
+
+#include <gtk/gtk.h>
+
+GtkWidget *build_scrolled_window(void);
+
+#endif
+</file>
+
+<file path="filemanager/src/ui/toolbar.c">
+#include <gtk/gtk.h>
+#include "toolbar.h"
+
+GtkWidget *build_toolbar(void)
+{
+    GtkWidget *toolbar = gtk_box_new(
+        GTK_ORIENTATION_HORIZONTAL,
+        3
+    );
+
+    gtk_widget_set_name(toolbar, "explorer-toolbar");
+
+    // botões de navegação
+    GtkWidget *backButton = gtk_button_new_from_icon_name("go-previous", GTK_ICON_SIZE_BUTTON);
+    GtkWidget *forwardButton = gtk_button_new_from_icon_name("go-next", GTK_ICON_SIZE_BUTTON);
+
+    gtk_box_pack_start(GTK_BOX(toolbar),backButton,FALSE,FALSE,0);
+    gtk_box_pack_start(GTK_BOX(toolbar),forwardButton,FALSE,FALSE,0);
+
+
+    GtkWidget *pathEntry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(pathEntry), "Procurar...");
+
+    gtk_widget_set_halign(pathEntry, GTK_ALIGN_FILL);
+    gtk_box_pack_start(GTK_BOX(toolbar),pathEntry,TRUE,TRUE,0);
+    
+    GtkWidget *btn_hidden = gtk_button_new_from_icon_name("eye-not-looking-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_widget_set_tooltip_text(btn_hidden, "Mostrar/Ocultar arquivos ocultos (Ctrl+H)");
+
+    gtk_box_pack_start(GTK_BOX(toolbar),btn_hidden,FALSE,FALSE,0);
+    return toolbar;
+}
+</file>
+
+<file path="filemanager/src/ui/toolbar.h">
+#ifndef TOOLBAR_H
+#define TOOLBAR_H
+
+#include <gtk/gtk.h>
+
+GtkWidget *build_toolbar(void);
+
+#endif
+</file>
+
+<file path="filemanager/src/main.c">
+#include <gtk/gtk.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "processors/directories.h"
+#include "ui/window/window.h"
+#include "ui/mainbox.h"
+#include "ui/toolbar.h"
+#include "ui/actionBar.h"
+#include "ui/filearea.h"
+#include "ui/scrolledwindow.h"
+
+static void activate(GtkApplication *app, gpointer user_data)
+{
+    const char *start_path = user_data;
+
+    GtkWidget *window = build_window(app);
+    GtkWidget *main_box = build_main_box();
+    GtkWidget *toolbar = build_toolbar();
+    GtkWidget *file_area = build_file_area();
+    GtkWidget *scrolled_window = build_scrolled_window();
+    GtkWidget *action_bar = build_action_bar();
+
+    gtk_container_add(
+        GTK_CONTAINER(scrolled_window),
+        file_area
+    );
+
+    gtk_box_pack_start(
+        GTK_BOX(main_box),
+        toolbar,
+        FALSE,
+        FALSE,
+        0
+    );
+
+    gtk_box_pack_start(
+        GTK_BOX(main_box),
+        scrolled_window,
+        TRUE,
+        TRUE,
+        0
+    );
+
+    gtk_box_pack_start(
+        GTK_BOX(main_box),
+        action_bar,
+        FALSE,
+        FALSE,
+        0
+    );
+
+    gtk_container_add(
+        GTK_CONTAINER(window),
+        main_box
+    );
+
+    EdensDirectoryEntries entries;
+    int error = read_directory(start_path, &entries);
+
+    if (error != 0) {
+        fprintf(
+            stderr,
+            "Erro ao ler diretório '%s': %d\n",
+            start_path,
+            error
+        );
+
+        gtk_widget_show_all(window);
+        return;
+    }
+
+    populate_file_area(file_area, &entries);
+    free_directory_entries(&entries);
+
+    gtk_widget_show_all(window);
+}
+
+int main(int argc, char *argv[])
+{
+    const char *start_path = NULL;
+
+    if (argc > 1) {
+        start_path = argv[1];
+    } else {
+        start_path = getenv("HOME");
+
+        if (start_path == NULL) {
+            start_path = ".";
+        }
+    }
+
+    GtkApplication *app = gtk_application_new(
+        "com.edens.FileManager",
+        G_APPLICATION_DEFAULT_FLAGS
+    );
+
+    g_signal_connect(
+        app,
+        "activate",
+        G_CALLBACK(activate),
+        (gpointer) start_path
+    );
+
+    /*
+     * O caminho é processado por nós.
+     * O GTK recebe somente o argumento do executável.
+     */
+    int app_argc = 1;
+
+    int status = g_application_run(
+        G_APPLICATION(app),
+        app_argc,
+        argv
+    );
+
+    g_object_unref(app);
+
+    return status;
+}
+</file>
+
+<file path=".gitignore">
+# Build
+/build/
+
+# IDEs e ferramentas
+/.idea/
+/.vscode/
+/.cache/
+.clangd
+compile_commands.json
+
+# Arquivos compilados
+*.o
+*.a
+*.so
+
+# Executáveis gerados
+/edens
+/eden-desktop
+</file>
+
+<file path="CMakeLists.txt">
+cmake_minimum_required(VERSION 3.20)
+
+project(Eden LANGUAGES C CXX)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(PkgConfig REQUIRED)
+
+pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb)
+pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
+
+qt_standard_project_setup()
+
+# Eden Desktop: C++ / Qt 6
+qt_add_executable(eden-desktop
+    desktop/src/main.cpp
+    desktop/src/desktop/desktopwindow.hpp
+    desktop/src/desktop/desktopwindow.cpp
+    desktop/src/filemanager/filemanagerwindow.hpp
+    desktop/src/filemanager/filemanagerwindow.cpp
+    desktop/src/windowmanager/windowmanager.hpp
+    desktop/src/windowmanager/windowmanager.cpp
+)
+
+target_include_directories(eden-desktop
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/desktop/src
+)
+
+target_link_libraries(eden-desktop
+    PRIVATE
+        Qt6::Widgets
+        PkgConfig::XCB
+)
+
+# Eden File Manager: C / GTK 3
+add_executable(edens
+    filemanager/src/main.c
+    filemanager/src/processors/directories.c
+    filemanager/src/ui/window/window.c
+    filemanager/src/ui/mainbox.c
+    filemanager/src/ui/toolbar.c
+    filemanager/src/ui/filearea.c
+    filemanager/src/ui/scrolledwindow.c
+    filemanager/src/ui/fileitem.c
+    filemanager/src/ui/window/menu.c
+    filemanager/src/ui/window/menu_actions.c
+    filemanager/src/ui/actionBar.c
+    
+)
+
+target_include_directories(edens
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/filemanager/src
+)
+
+target_compile_options(edens
+    PRIVATE
+        -Wall
+        -Wextra
+)
+
+target_link_libraries(edens
+    PRIVATE
+        PkgConfig::GTK3
+)
+
+add_executable(windowmanager-test
+    desktop/tests/windowmanager_test.cpp
+    desktop/src/windowmanager/windowmanager.cpp
+)
+
+target_include_directories(windowmanager-test
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/desktop/src
+)
+
+target_link_libraries(windowmanager-test
+    PRIVATE
+        PkgConfig::XCB
+)
+</file>
+
+<file path="README.md">
+Eden
+
+Projeto de ambiente desktop Linux desenvolvido com C, C++ e Qt.
+
+Componentes
+
+Eden Desktop
+
+Ambiente de desktop desenvolvido em C++ e Qt 6, responsável pela área de trabalho, papel de parede e ícones.
+
+Eden's Manager
+
+Gerenciador de arquivos desenvolvido em C e GTK 3, responsável pela navegação entre diretórios.
+
+Tecnologias
+
+C11
+
+C++20
+
+Qt 6 Widgets
+
+GTK 3
+
+CMake
+
+Compilação
+
+cmake -S . -B build
+cmake --build build
+
+Execução
+
+Iniciar o desktop:
+
+./build/eden-desktop
+
+Iniciar o gerenciador de arquivos diretamente:
+
+./build/edens "$HOME"
+</file>
+
+</files>
