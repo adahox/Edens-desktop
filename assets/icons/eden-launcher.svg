@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <circle cx="24" cy="24" r="20" fill="#B4BEFE"/>
+  <!-- Plant / Leaf Dev Symbol -->
+  <path d="M24 34 C24 24 14 16 14 16 C14 16 24 18 24 26 C24 18 34 16 34 16 C34 16 24 24 24 34 Z" fill="#11111B"/>
+  <path d="M24 34 V38" stroke="#11111B" stroke-width="3" stroke-linecap="round"/>
+</svg>

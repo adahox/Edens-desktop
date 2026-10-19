@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class WindowManager final
@@ -69,6 +70,9 @@ private:
     void processButtonRelease();
     void processUnmapNotify(xcb_generic_event_t* event);
     void processMapRequest(xcb_generic_event_t* event);
+    void processMapNotify(xcb_generic_event_t* event);
+    void processConfigureNotify(xcb_generic_event_t* event);
+    void fitDesktopWindow(xcb_window_t window);
     void processDestroyNotify(xcb_generic_event_t* event);
     void processConfigureRequest(xcb_generic_event_t* event);
     void processClientMessage(xcb_generic_event_t* event);
@@ -140,6 +144,7 @@ private:
     xcb_window_t focusedFrame_ = XCB_WINDOW_NONE;
     xcb_window_t draggingFrame_ = XCB_WINDOW_NONE;
     xcb_window_t panel_ = XCB_WINDOW_NONE;
+    std::unordered_set<xcb_window_t> desktopWindows_;
     xcb_window_t supportingWindow_ = XCB_WINDOW_NONE;
 
     int16_t dragStartX_ = 0;
@@ -158,7 +163,7 @@ private:
     uint16_t reservedLeft_ = 0;
     uint16_t reservedRight_ = 0;
     uint16_t reservedTop_ = 0;
-    uint16_t reservedBottom_ = kPanelHeight;
+    uint16_t reservedBottom_ = 0;
 
     xcb_atom_t wmProtocols_ = XCB_ATOM_NONE;
     xcb_atom_t wmDeleteWindow_ = XCB_ATOM_NONE;

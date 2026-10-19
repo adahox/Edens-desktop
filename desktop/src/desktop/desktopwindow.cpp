@@ -4,7 +4,9 @@
 #include <QAction>
 #include <QColor>
 #include <QContextMenuEvent>
-#include <QFileSystemModel>
+#include <QStandardItemModel>
+#include <QFileSystemWatcher>
+#include <QStandardItem>
 #include <QListView>
 #include <QMenu>
 #include <QPainter>
@@ -18,8 +20,12 @@
 #include <QFileInfo>
 #include <QFileIconProvider>
 #include <QCloseEvent>
+#include <QCursor>
+#include <QShowEvent>
+#include <QTimer>
 #include <QApplication>
 #include <QStyle>
+#include <QStyledItemDelegate>
 #include "filemanager/filemanagerwindow.hpp"
 
 namespace {
@@ -27,15 +33,68 @@ namespace {
 class DesktopIconProvider final : public QFileIconProvider
 {
 public:
-    QIcon icon(const QFileInfo &info) const override
+    DesktopIconProvider()
     {
         const QStyle *style = QApplication::style();
+        directoryIcon_ = style->standardIcon(QStyle::SP_DirIcon);
+        fileIcon_ = style->standardIcon(QStyle::SP_FileIcon);
+    }
 
-        if (info.isDir()) {
-            return style->standardIcon(QStyle::SP_DirIcon);
+    QIcon icon(const QFileInfo &info) const override
+    {
+        return info.isDir() ? directoryIcon_ : fileIcon_;
+    }
+
+private:
+    QIcon directoryIcon_;
+    QIcon fileIcon_;
+};
+
+class DesktopItemDelegate final : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    void paint(
+        QPainter *painter,
+        const QStyleOptionViewItem &option,
+        const QModelIndex &index) const override
+    {
+        painter->save();
+
+        QStyleOptionViewItem itemOption = option;
+        initStyleOption(&itemOption, index);
+
+        if ((itemOption.state & QStyle::State_Selected) != 0) {
+            painter->fillRect(itemOption.rect, QColor(20, 20, 20, 90));
         }
 
-        return style->standardIcon(QStyle::SP_FileIcon);
+        const QSize iconSize = itemOption.decorationSize;
+        const QRect iconRect(
+            itemOption.rect.x() + (itemOption.rect.width() - iconSize.width()) / 2,
+            itemOption.rect.y() + 6,
+            iconSize.width(),
+            iconSize.height());
+        itemOption.icon.paint(painter, iconRect);
+
+        const QRect textRect(
+            itemOption.rect.x() + 4,
+            iconRect.bottom() + 4,
+            itemOption.rect.width() - 8,
+            itemOption.rect.bottom() - iconRect.bottom() - 6);
+
+        painter->setPen(QColor(0, 0, 0, 210));
+        painter->drawText(
+            textRect.translated(1, 1),
+            Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
+            itemOption.text);
+        painter->setPen(Qt::white);
+        painter->drawText(
+            textRect,
+            Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
+            itemOption.text);
+
+        painter->restore();
     }
 };
 
@@ -67,11 +126,7 @@ DesktopWindow::DesktopWindow(QWidget *parent)
 
     QDir().mkpath(desktopDirectory_);
 
-    setWindowFlags(
-        Qt::Window |
-        Qt::FramelessWindowHint |
-        Qt::BypassWindowManagerHint
-    );
+    setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
 
     setAttribute(Qt::WA_OpaquePaintEvent);
     setWindowTitle("Eden Desktop");
@@ -81,32 +136,19 @@ DesktopWindow::DesktopWindow(QWidget *parent)
 
 DesktopWindow::~DesktopWindow()
 {
-    if (fileSystemModel_ != nullptr) {
-        fileSystemModel_->setIconProvider(nullptr);
-    }
-
     delete iconProvider_;
     iconProvider_ = nullptr;
 }
 
 void DesktopWindow::setupFileArea()
 {
-    fileSystemModel_ = new QFileSystemModel(this);
-
-    fileSystemModel_->setFilter(
-        QDir::AllDirs |
-        QDir::Files |
-        QDir::NoDotAndDotDot |
-        QDir::Readable
-    );
-
     iconProvider_ = new DesktopIconProvider();
-    fileSystemModel_->setIconProvider(iconProvider_);
-    fileSystemModel_->setRootPath(desktopDirectory_);
+    fileModel_ = new QStandardItemModel(this);
 
     fileView_ = new QListView(this);
+    fileView_->setItemDelegate(new DesktopItemDelegate(fileView_));
 
-    fileView_->setModel(fileSystemModel_);
+    fileView_->setModel(fileModel_);
     fileView_->setViewMode(QListView::IconMode);
     fileView_->setFlow(QListView::LeftToRight);
     fileView_->setMovement(QListView::Snap);
@@ -174,31 +216,49 @@ void DesktopWindow::setupFileArea()
         }
     );
 
+    directoryWatcher_ = new QFileSystemWatcher(this);
+    directoryWatcher_->addPath(desktopDirectory_);
     connect(
-        fileSystemModel_,
-        &QFileSystemModel::directoryLoaded,
+        directoryWatcher_,
+        &QFileSystemWatcher::directoryChanged,
         this,
-        [this](const QString &path) {
-            if (QDir(path) != QDir(desktopDirectory_)) {
-                return;
-            }
-
-            const QModelIndex root =
-                fileSystemModel_->index(desktopDirectory_);
-
-            if (root.isValid()) {
-                fileView_->setRootIndex(root);
-            }
+        [this](const QString &) {
+            revealDesktopFiles();
         }
     );
 
-    const QModelIndex root = fileSystemModel_->index(desktopDirectory_);
-
-    if (root.isValid()) {
-        fileView_->setRootIndex(root);
-    }
+    revealDesktopFiles();
 
     fileView_->setGeometry(rect());
+    applyWallpaper();
+}
+
+void DesktopWindow::revealDesktopFiles()
+{
+    if (fileModel_ == nullptr || fileView_ == nullptr || iconProvider_ == nullptr) {
+        return;
+    }
+
+    fileModel_->clear();
+
+    const QFileInfoList entries = QDir(desktopDirectory_).entryInfoList(
+        QDir::AllDirs | QDir::Files | QDir::NoDotAndDotDot | QDir::Readable,
+        QDir::DirsFirst | QDir::IgnoreCase | QDir::Name);
+
+    for (const QFileInfo &info : entries) {
+        auto *item = new QStandardItem(iconProvider_->icon(info), info.fileName());
+        item->setData(info.absoluteFilePath(), Qt::UserRole);
+        item->setEditable(false);
+        fileModel_->appendRow(item);
+    }
+
+    fileView_->viewport()->update();
+}
+
+void DesktopWindow::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    revealDesktopFiles();
     applyWallpaper();
 }
 
@@ -258,7 +318,7 @@ void DesktopWindow::applyWallpaper()
 
 void DesktopWindow::openItem(const QModelIndex &index)
 {
-    const QString path = fileSystemModel_->filePath(index);
+    const QString path = index.data(Qt::UserRole).toString();
     const QFileInfo info(path);
 
     if (info.isDir()) {
@@ -340,18 +400,15 @@ void DesktopWindow::showDesktopContextMenu(
     QAction *quitAction =
         menu.addAction("Encerrar sessão");
 
-    QAction *selectedAction =
-        menu.exec(globalPosition);
+    const QPoint popupAt = globalPosition.isNull() ? QCursor::pos() : globalPosition;
+    QTimer::singleShot(0, &menu, [&menu]() {
+        menu.raise();
+        menu.repaint();
+    });
+    QAction *selectedAction = menu.exec(popupAt);
 
     if (selectedAction == refreshAction) {
-        fileSystemModel_->setRootPath(QString());
-
-        fileSystemModel_->setRootPath(desktopDirectory_);
-
-        fileView_->setRootIndex(
-            fileSystemModel_->index(desktopDirectory_)
-        );
-
+        revealDesktopFiles();
         return;
     }
 
@@ -389,18 +446,24 @@ void DesktopWindow::showDesktopContextMenu(
 
 void DesktopWindow::navigateToDirectory(const QString &path)
 {
-    const QModelIndex index =
-        fileSystemModel_->index(path);
-
-    if (!index.isValid()) {
+    if (!QFileInfo(path).isDir()) {
         return;
     }
 
-    directoryHistory_.append(
-        fileSystemModel_->filePath(fileView_->rootIndex())
-    );
+    directoryHistory_.append(desktopDirectory_);
+    desktopDirectory_ = path;
 
-    fileView_->setRootIndex(index);
+    if (directoryWatcher_ != nullptr) {
+        const QStringList watched = directoryWatcher_->directories();
+
+        if (!watched.isEmpty()) {
+            directoryWatcher_->removePaths(watched);
+        }
+
+        directoryWatcher_->addPath(desktopDirectory_);
+    }
+
+    revealDesktopFiles();
 }
 
 void DesktopWindow::navigateBack()
@@ -409,13 +472,17 @@ void DesktopWindow::navigateBack()
         return;
     }
 
-    const QString previousPath =
-        directoryHistory_.takeLast();
+    desktopDirectory_ = directoryHistory_.takeLast();
 
-    const QModelIndex index =
-        fileSystemModel_->index(previousPath);
+    if (directoryWatcher_ != nullptr) {
+        const QStringList watched = directoryWatcher_->directories();
 
-    if (index.isValid()) {
-        fileView_->setRootIndex(index);
+        if (!watched.isEmpty()) {
+            directoryWatcher_->removePaths(watched);
+        }
+
+        directoryWatcher_->addPath(desktopDirectory_);
     }
+
+    revealDesktopFiles();
 }

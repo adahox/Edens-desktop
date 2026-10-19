@@ -17,7 +17,7 @@ launch() {
 
     if command -v "$name" >/dev/null 2>&1; then
         echo "[Eden] Abrindo ${name}"
-        "$@" >/dev/null 2>&1 &
+        setsid "$@" >/dev/null 2>&1 < /dev/null &
     else
         echo "[Eden] Ausente: ${name}"
     fi

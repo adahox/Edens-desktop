@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- Cylinder 1 -->
+  <ellipse cx="24" cy="12" rx="16" ry="6" fill="#FAB387"/>
+  <path d="M8 12 V20 C8 23 15 26 24 26 C33 26 40 23 40 20 V12" fill="#FAB387" opacity="0.8"/>
+  <ellipse cx="24" cy="20" rx="16" ry="6" fill="none" stroke="#11111B" stroke-width="1.5"/>
+  <!-- Cylinder 2 -->
+  <path d="M8 20 V28 C8 31 15 34 24 34 C33 34 40 31 40 28 V20" fill="#FAB387" opacity="0.9"/>
+  <ellipse cx="24" cy="28" rx="16" ry="6" fill="none" stroke="#11111B" stroke-width="1.5"/>
+  <!-- Cylinder 3 -->
+  <path d="M8 28 V36 C8 39 15 42 24 42 C33 42 40 39 40 36 V28" fill="#FAB387"/>
+  <ellipse cx="24" cy="36" rx="16" ry="6" fill="none" stroke="#11111B" stroke-width="1.5"/>
+</svg>

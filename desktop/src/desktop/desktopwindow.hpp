@@ -8,9 +8,11 @@
 
 class QCloseEvent;
 class QContextMenuEvent;
+class QShowEvent;
 class QFileIconProvider;
-class QFileSystemModel;
+class QFileSystemWatcher;
 class QListView;
+class QStandardItemModel;
 class QModelIndex;
 
 class DesktopWindow final : public QWidget
@@ -21,12 +23,14 @@ public:
 
 protected:
     void paintEvent(QPaintEvent *event) override;
+    void showEvent(QShowEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
 private:
     void setupFileArea();
+    void revealDesktopFiles();
     void applyWallpaper();
     [[nodiscard]] QString wallpaperPath() const;
     void openItem(const QModelIndex &index);
@@ -38,7 +42,8 @@ private:
     QStringList directoryHistory_;
     QPixmap wallpaper_;
     QFileIconProvider *iconProvider_ = nullptr;
+    QFileSystemWatcher *directoryWatcher_ = nullptr;
 
     QListView *fileView_ = nullptr;
-    QFileSystemModel *fileSystemModel_ = nullptr;
+    QStandardItemModel *fileModel_ = nullptr;
 };

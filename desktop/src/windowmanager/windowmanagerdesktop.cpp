@@ -20,6 +20,53 @@ constexpr uint32_t kSizeHintMin = 1u << 4;
 constexpr uint32_t kSizeHintMax = 1u << 5;
 constexpr uint32_t kSizeHintBase = 1u << 8;
 constexpr uint32_t kInputHint = 1u;
+constexpr char kPanelFont[] =
+    "-misc-fixed-medium-r-normal--13-120-75-75-c-70-iso8859-1";
+
+uint32_t allocateColor(
+    xcb_connection_t* connection,
+    xcb_colormap_t colormap,
+    uint32_t fallback,
+    uint16_t red,
+    uint16_t green,
+    uint16_t blue)
+{
+    const auto cookie = xcb_alloc_color(connection, colormap, red, green, blue);
+    xcb_alloc_color_reply_t* reply = xcb_alloc_color_reply(connection, cookie, nullptr);
+
+    if (reply == nullptr) {
+        return fallback;
+    }
+
+    const uint32_t pixel = reply->pixel;
+    std::free(reply);
+    return pixel;
+}
+
+bool openPanelFont(xcb_connection_t* connection, xcb_font_t font)
+{
+    const auto cookie = xcb_open_font_checked(
+        connection,
+        font,
+        static_cast<uint16_t>(std::strlen(kPanelFont)),
+        kPanelFont);
+    xcb_generic_error_t* error = xcb_request_check(connection, cookie);
+
+    if (error == nullptr) {
+        return true;
+    }
+
+    std::free(error);
+    const auto alias = xcb_open_font_checked(connection, font, 5, "fixed");
+    error = xcb_request_check(connection, alias);
+
+    if (error == nullptr) {
+        return true;
+    }
+
+    std::free(error);
+    return false;
+}
 
 std::string readableTitle(const char* data, int length, bool utf8)
 {
@@ -822,18 +869,36 @@ void WindowManager::drawPanel()
     }
 
     const xcb_gcontext_t gc = xcb_generate_id(connection_);
-    const uint32_t values[] = {
-        screen_->white_pixel,
+    const xcb_font_t font = xcb_generate_id(connection_);
+    const uint32_t fillColor = allocateColor(
+        connection_,
+        screen_->default_colormap,
         screen_->black_pixel,
+        0x1E1E,
+        0x2838,
+        0x3A3A);
+    const uint32_t textColor = allocateColor(
+        connection_,
+        screen_->default_colormap,
+        screen_->white_pixel,
+        0xFFFF,
+        0xFFFF,
+        0xFFFF);
+    const bool haveFont = openPanelFont(connection_, font);
+    uint32_t values[] = {
+        fillColor,
+        fillColor,
+        haveFont ? font : 0,
         0
     };
+    uint32_t mask =
+        XCB_GC_FOREGROUND | XCB_GC_BACKGROUND | XCB_GC_GRAPHICS_EXPOSURES;
 
-    xcb_create_gc(
-        connection_,
-        gc,
-        panel_,
-        XCB_GC_FOREGROUND | XCB_GC_BACKGROUND | XCB_GC_GRAPHICS_EXPOSURES,
-        values);
+    if (haveFont) {
+        mask |= XCB_GC_FONT;
+    }
+
+    xcb_create_gc(connection_, gc, panel_, mask, values);
 
     const xcb_rectangle_t background = {
         0,
@@ -843,6 +908,14 @@ void WindowManager::drawPanel()
     };
 
     xcb_poly_fill_rectangle(connection_, panel_, gc, 1, &background);
+
+    xcb_change_gc(connection_, gc, XCB_GC_FOREGROUND, &textColor);
+
+    const xcb_point_t separator[] = {
+        {0, 0},
+        {static_cast<int16_t>(geometry->width), 0}
+    };
+    xcb_poly_line(connection_, XCB_COORD_MODE_ORIGIN, panel_, gc, 2, separator);
 
     std::vector<xcb_window_t> ordered;
 
@@ -890,14 +963,16 @@ void WindowManager::drawPanel()
             label.resize(20);
         }
 
-        xcb_image_text_8(
-            connection_,
-            static_cast<uint8_t>(label.size()),
-            panel_,
-            gc,
-            static_cast<int16_t>(8 + index * 160),
-            20,
-            label.c_str());
+        if (haveFont) {
+            xcb_image_text_8(
+                connection_,
+                static_cast<uint8_t>(label.size()),
+                panel_,
+                gc,
+                static_cast<int16_t>(8 + index * 160),
+                20,
+                label.c_str());
+        }
     }
 
     for (uint32_t desktop = 0; desktop < kDesktopCount; ++desktop) {
@@ -906,7 +981,7 @@ void WindowManager::drawPanel()
             ? std::snprintf(label, sizeof(label), "[%u]", desktop + 1)
             : std::snprintf(label, sizeof(label), " %u ", desktop + 1);
 
-        if (length > 0) {
+        if (haveFont && length > 0) {
             xcb_image_text_8(
                 connection_,
                 static_cast<uint8_t>(length),
@@ -919,6 +994,10 @@ void WindowManager::drawPanel()
     }
 
     xcb_free_gc(connection_, gc);
+
+    if (haveFont) {
+        xcb_close_font(connection_, font);
+    }
     std::free(geometry);
     raisePanel();
     xcb_flush(connection_);
@@ -1214,65 +1293,6 @@ void WindowManager::setupDesktopIntegration()
         supportingWindow_ = XCB_WINDOW_NONE;
     }
 
-    if (screen_->height_in_pixels > kPanelHeight) {
-        panel_ = xcb_generate_id(connection_);
-        const uint32_t panelValues[] = {
-            screen_->black_pixel,
-            XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_BUTTON_PRESS
-        };
-
-        const auto panelCookie = xcb_create_window_checked(
-            connection_,
-            XCB_COPY_FROM_PARENT,
-            panel_,
-            screen_->root,
-            0,
-            static_cast<int16_t>(screen_->height_in_pixels - kPanelHeight),
-            screen_->width_in_pixels,
-            kPanelHeight,
-            0,
-            XCB_WINDOW_CLASS_INPUT_OUTPUT,
-            screen_->root_visual,
-            XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK,
-            panelValues);
-        xcb_generic_error_t* panelError = xcb_request_check(connection_, panelCookie);
-
-        if (panelError != nullptr) {
-            std::free(panelError);
-            panel_ = XCB_WINDOW_NONE;
-            publishRootProperties();
-            publishClientList();
-            xcb_flush(connection_);
-            return;
-        }
-
-        if (wmWindowType_ != XCB_ATOM_NONE && wmWindowTypeDock_ != XCB_ATOM_NONE) {
-            xcb_change_property(
-                connection_,
-                XCB_PROP_MODE_REPLACE,
-                panel_,
-                wmWindowType_,
-                XCB_ATOM_ATOM,
-                32,
-                1,
-                &wmWindowTypeDock_);
-        }
-
-        const uint32_t strut[] = {0, 0, 0, kPanelHeight};
-
-        xcb_change_property(
-            connection_,
-            XCB_PROP_MODE_REPLACE,
-            panel_,
-            netWmStrut_,
-            XCB_ATOM_CARDINAL,
-            32,
-            4,
-            strut);
-
-        xcb_map_window(connection_, panel_);
-    }
-
     publishRootProperties();
 
     for (const auto& [client, window] : windows_) {
@@ -1287,7 +1307,7 @@ void WindowManager::setupDesktopIntegration()
     std::cout
         << "Eden anunciou EWMH, "
         << kDesktopCount
-        << " áreas de trabalho e o painel inferior.\n";
+        << " áreas de trabalho.\n";
 }
 
 void WindowManager::releaseManagedClients()
@@ -1357,13 +1377,14 @@ void WindowManager::clearProtocolState()
     utf8String_ = XCB_ATOM_NONE;
     panel_ = XCB_WINDOW_NONE;
     supportingWindow_ = XCB_WINDOW_NONE;
+    desktopWindows_.clear();
     focusOrder_.clear();
     panelClients_.clear();
     currentDesktop_ = 0;
     reservedLeft_ = 0;
     reservedRight_ = 0;
     reservedTop_ = 0;
-    reservedBottom_ = kPanelHeight;
+    reservedBottom_ = 0;
 }
 
 void WindowManager::processClientMessage(xcb_generic_event_t* event)

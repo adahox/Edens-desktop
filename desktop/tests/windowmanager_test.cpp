@@ -1,9 +1,27 @@
 #include "windowmanager/windowmanager.hpp"
 
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 
 int main()
 {
+    const char *display = std::getenv("DISPLAY");
+    const bool hostDisplay =
+        display == nullptr ||
+        display[0] == '\0' ||
+        std::strcmp(display, ":0") == 0 ||
+        std::strcmp(display, ":0.0") == 0;
+    const bool session = std::getenv("EDEN_SESSION") != nullptr;
+
+    if (hostDisplay && !session) {
+        std::cerr
+            << "O gerenciador não vai assumir o display :0 a partir deste terminal.\n"
+            << "Isso evita conflito com o gerenciador do Mint.\n"
+            << "Para testar, use ./scripts/run_xephyr.sh\n";
+        return 1;
+    }
+
     WindowManager windowManager;
 
     if (!windowManager.connect()) {

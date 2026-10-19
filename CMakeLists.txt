@@ -15,6 +15,8 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb)
+pkg_check_modules(CAIRO REQUIRED IMPORTED_TARGET cairo)
+pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0)
 pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
 
 qt_standard_project_setup()
@@ -24,6 +26,8 @@ qt_add_executable(eden-desktop
     desktop/src/main.cpp
     desktop/src/desktop/desktopwindow.hpp
     desktop/src/desktop/desktopwindow.cpp
+    desktop/src/desktop/dockbar.hpp
+    desktop/src/desktop/dockbar.cpp
     desktop/src/filemanager/filemanagerwindow.hpp
     desktop/src/filemanager/filemanagerwindow.cpp
     desktop/src/windowmanager/windowmanager.hpp
@@ -41,6 +45,9 @@ target_link_libraries(eden-desktop
     PRIVATE
         Qt6::Widgets
         PkgConfig::XCB
+        PkgConfig::CAIRO
+        PkgConfig::GLIB
+        /usr/lib/x86_64-linux-gnu/librsvg-2.so.2
 )
 
 # Eden File Manager: C / GTK 3

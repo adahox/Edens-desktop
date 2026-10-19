@@ -33,6 +33,12 @@ void WindowManager::processMessages(xcb_generic_event_t* event)
     case XCB_MAP_REQUEST:
         processMapRequest(event);
         break;
+    case XCB_MAP_NOTIFY:
+        processMapNotify(event);
+        break;
+    case XCB_CONFIGURE_NOTIFY:
+        processConfigureNotify(event);
+        break;
     case XCB_DESTROY_NOTIFY:
         processDestroyNotify(event);
         break;
@@ -394,7 +400,9 @@ void WindowManager::processMapRequest(xcb_generic_event_t* event)
     }
 
     if (isDesktopWindow(mapEvent->window)) {
+        desktopWindows_.insert(mapEvent->window);
         xcb_map_window(connection_, mapEvent->window);
+        fitDesktopWindow(mapEvent->window);
 
         const uint32_t stackMode[] = {XCB_STACK_MODE_BELOW};
         xcb_configure_window(
@@ -402,20 +410,119 @@ void WindowManager::processMapRequest(xcb_generic_event_t* event)
             mapEvent->window,
             XCB_CONFIG_WINDOW_STACK_MODE,
             stackMode);
+        raisePanel();
         xcb_flush(connection_);
         return;
     }
 
     if (!manageWindow(mapEvent->window)) {
         xcb_map_window(connection_, mapEvent->window);
-        xcb_flush(connection_);
     }
+
+    raisePanel();
+    xcb_flush(connection_);
+}
+
+void WindowManager::processMapNotify(xcb_generic_event_t* event)
+{
+    const auto* mapEvent =
+        reinterpret_cast<const xcb_map_notify_event_t*>(event);
+
+    if (mapEvent->window == panel_ || mapEvent->window == supportingWindow_) {
+        return;
+    }
+
+    if (windows_.contains(mapEvent->window)) {
+        raisePanel();
+        xcb_flush(connection_);
+        return;
+    }
+
+    if (desktopWindows_.contains(mapEvent->window) || isDesktopWindow(mapEvent->window)) {
+        desktopWindows_.insert(mapEvent->window);
+        fitDesktopWindow(mapEvent->window);
+    }
+
+    raisePanel();
+    xcb_flush(connection_);
+}
+
+void WindowManager::processConfigureNotify(xcb_generic_event_t* event)
+{
+    const auto* configureEvent =
+        reinterpret_cast<const xcb_configure_notify_event_t*>(event);
+
+    if (configureEvent->window == panel_ ||
+        configureEvent->window == supportingWindow_) {
+        return;
+    }
+
+    if (windows_.contains(configureEvent->window) ||
+        findByFrame(configureEvent->window) != nullptr ||
+        findByTitleBar(configureEvent->window) != nullptr) {
+        raisePanel();
+        return;
+    }
+
+    if (desktopWindows_.contains(configureEvent->window) ||
+        isDesktopWindow(configureEvent->window)) {
+        desktopWindows_.insert(configureEvent->window);
+        fitDesktopWindow(configureEvent->window);
+        return;
+    }
+
+    raisePanel();
+}
+
+void WindowManager::fitDesktopWindow(xcb_window_t window)
+{
+    if (!isConnected() || window == panel_) {
+        return;
+    }
+
+    const MonitorRect area = workArea();
+    const auto cookie = xcb_get_geometry(connection_, window);
+    xcb_get_geometry_reply_t* geometry =
+        xcb_get_geometry_reply(connection_, cookie, nullptr);
+
+    const bool alreadyFits =
+        geometry != nullptr &&
+        geometry->x == area.x &&
+        geometry->y == area.y &&
+        geometry->width == area.width &&
+        geometry->height == area.height;
+
+    std::free(geometry);
+
+    if (!alreadyFits) {
+        const uint32_t values[] = {
+            packedCoordinate(area.x),
+            packedCoordinate(area.y),
+            area.width,
+            area.height,
+            XCB_STACK_MODE_BELOW
+        };
+
+        xcb_configure_window(
+            connection_,
+            window,
+            XCB_CONFIG_WINDOW_X |
+                XCB_CONFIG_WINDOW_Y |
+                XCB_CONFIG_WINDOW_WIDTH |
+                XCB_CONFIG_WINDOW_HEIGHT |
+                XCB_CONFIG_WINDOW_STACK_MODE,
+            values);
+    }
+
+    raisePanel();
 }
 
 void WindowManager::processDestroyNotify(xcb_generic_event_t* event)
 {
     const auto* destroyEvent =
         reinterpret_cast<xcb_destroy_notify_event_t*>(event);
+
+    desktopWindows_.erase(destroyEvent->window);
 
     const auto iterator = windows_.find(destroyEvent->window);
 
@@ -432,6 +539,8 @@ void WindowManager::processDestroyNotify(xcb_generic_event_t* event)
 
         xcb_destroy_window(connection_, frame);
         windows_.erase(iterator);
+        desktopWindows_.erase(client);
+        desktopWindows_.erase(frame);
         noteWindowRemoved(client, frame);
         xcb_flush(connection_);
     }
@@ -447,6 +556,13 @@ void WindowManager::processConfigureRequest(xcb_generic_event_t* event)
         reinterpret_cast<xcb_configure_request_event_t*>(event);
 
     const auto managed = windows_.find(configureEvent->window);
+
+    if (managed == windows_.end() && isDesktopWindow(configureEvent->window)) {
+        desktopWindows_.insert(configureEvent->window);
+        fitDesktopWindow(configureEvent->window);
+        xcb_flush(connection_);
+        return;
+    }
 
     if (managed != windows_.end()) {
         if (managed->second.maximized) {

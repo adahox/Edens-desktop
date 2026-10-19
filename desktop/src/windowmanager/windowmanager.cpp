@@ -284,12 +284,8 @@ bool WindowManager::acquireControl()
                     children[i] == panel_ || children[i] == supportingWindow_;
 
                 if (!ownWindow && isDesktopWindow(children[i])) {
-                    const uint32_t stackMode[] = {XCB_STACK_MODE_BELOW};
-                    xcb_configure_window(
-                        connection_,
-                        children[i],
-                        XCB_CONFIG_WINDOW_STACK_MODE,
-                        stackMode);
+                    desktopWindows_.insert(children[i]);
+                    fitDesktopWindow(children[i]);
                 } else if (!ownWindow && isDockWindow(children[i])) {
                     noteDock(children[i]);
                 } else if (!ownWindow &&
