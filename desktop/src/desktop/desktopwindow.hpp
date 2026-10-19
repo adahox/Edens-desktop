@@ -2,9 +2,12 @@
 #pragma once
 
 #include <QPixmap>
+#include <QPoint>
 #include <QString>
 #include <QStringList>
 #include <QWidget>
+
+class DesktopRipple;
 
 class QCloseEvent;
 class QContextMenuEvent;
@@ -21,6 +24,8 @@ public:
     explicit DesktopWindow(QWidget *parent = nullptr);
     ~DesktopWindow() override;
 
+    static void allowSessionExit();
+
 protected:
     void paintEvent(QPaintEvent *event) override;
     void showEvent(QShowEvent *event) override;
@@ -35,6 +40,7 @@ private:
     [[nodiscard]] QString wallpaperPath() const;
     void openItem(const QModelIndex &index);
     void showDesktopContextMenu(const QPoint &globalPosition);
+    void playRipple(const QPoint &localPosition);
     void navigateToDirectory(const QString &path);
     void navigateBack();
     
@@ -46,4 +52,7 @@ private:
 
     QListView *fileView_ = nullptr;
     QStandardItemModel *fileModel_ = nullptr;
+    DesktopRipple *ripple_ = nullptr;
+
+    static bool sessionExitAllowed_;
 };

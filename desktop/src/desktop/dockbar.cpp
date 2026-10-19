@@ -1,8 +1,14 @@
 #include "desktop/dockbar.hpp"
+#include "desktop/desktopwindow.hpp"
 
 #include <QAction>
 #include <QApplication>
+#include <QDialog>
+#include <QLabel>
+#include <QPlainTextEdit>
+#include <QVBoxLayout>
 #include <QBitmap>
+#include <QByteArray>
 #include <QCoreApplication>
 #include <QDir>
 #include <QEvent>
@@ -16,18 +22,27 @@
 #include <QPainterPath>
 #include <QPen>
 #include <QProcess>
+#include <QPushButton>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QImage>
+#include <QLinearGradient>
+#include <QShowEvent>
 
 #include <cairo/cairo.h>
 
 #include <QtGui/qguiapplication_platform.h>
 #include <xcb/xcb.h>
 
+#include <csignal>
 #include <cstring>
 #include <cstdlib>
 #include <iterator>
+
+#include <spawn.h>
+#include <unistd.h>
+
+extern char **environ;
 
 extern "C" {
 
@@ -70,6 +85,39 @@ QString iconFile(const QString &name)
     }
 
     return {};
+}
+
+QString wallpaperFile()
+{
+    const QDir binaryDirectory(QCoreApplication::applicationDirPath());
+    const QString candidates[] = {
+        binaryDirectory.filePath(QStringLiteral("../assets/wallpapers/default.jpg")),
+        binaryDirectory.filePath(QStringLiteral("assets/wallpapers/default.jpg")),
+        QStringLiteral("assets/wallpapers/default.jpg")
+    };
+
+    for (const QString &candidate : candidates) {
+        const QString cleaned = QDir::cleanPath(candidate);
+
+        if (QFileInfo::exists(cleaned)) {
+            return cleaned;
+        }
+    }
+
+    return {};
+}
+
+void makeOpaque(QImage &image)
+{
+    image = image.convertToFormat(QImage::Format_ARGB32);
+
+    for (int y = 0; y < image.height(); ++y) {
+        auto *line = reinterpret_cast<QRgb *>(image.scanLine(y));
+
+        for (int x = 0; x < image.width(); ++x) {
+            line[x] = qRgba(qRed(line[x]), qGreen(line[x]), qBlue(line[x]), 255);
+        }
+    }
 }
 
 QPixmap loadIcon(const QString &name)
@@ -241,6 +289,91 @@ QPixmap spacesIcon()
     return pixmap;
 }
 
+QPixmap buildIcon()
+{
+    QPixmap pixmap(64, 64);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(166, 227, 161));
+    painter.drawRoundedRect(2, 2, 60, 60, 16, 16);
+    painter.setPen(QPen(QColor(17, 17, 27), 5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.drawLine(QPointF(18, 34), QPointF(28, 46));
+    painter.drawLine(QPointF(28, 46), QPointF(48, 22));
+    return pixmap;
+}
+
+bool sameDisplay(qint64 pid)
+{
+    QFile environment(QStringLiteral("/proc/%1/environ").arg(pid));
+
+    if (!environment.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+
+    const QString display = qEnvironmentVariable("DISPLAY");
+    const QStringList variables = QString::fromUtf8(environment.readAll()).split(QChar('\0'));
+
+    return variables.contains(QStringLiteral("DISPLAY=") + display);
+}
+
+bool launchAfterDelay(const QString &program, const char *delaySeconds)
+{
+    const QByteArray shell("/bin/sh");
+    const QByteArray script = QByteArray("sleep ") + delaySeconds + "; exec \"$1\"";
+    const QByteArray name("sh");
+    const QByteArray target = QFile::encodeName(program);
+    char *argv[] = {
+        const_cast<char *>(shell.constData()),
+        const_cast<char *>("-c"),
+        const_cast<char *>(script.constData()),
+        const_cast<char *>(name.constData()),
+        const_cast<char *>(target.constData()),
+        nullptr
+    };
+
+    posix_spawnattr_t attributes;
+
+    if (posix_spawnattr_init(&attributes) != 0) {
+        return false;
+    }
+
+    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSID);
+    pid_t pid = 0;
+    const int result = posix_spawn(&pid, shell.constData(), nullptr, &attributes, argv, environ);
+    posix_spawnattr_destroy(&attributes);
+    return result == 0 && pid > 0;
+}
+
+void stopDesktopTools()
+{
+    QDir processes(QStringLiteral("/proc"));
+    const QStringList entries = processes.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+
+    for (const QString &entry : entries) {
+        bool numeric = false;
+        const qint64 pid = entry.toLongLong(&numeric);
+
+        if (!numeric || pid == QCoreApplication::applicationPid() || !sameDisplay(pid)) {
+            continue;
+        }
+
+        QFile command(QStringLiteral("/proc/%1/comm").arg(entry));
+
+        if (!command.open(QIODevice::ReadOnly)) {
+            continue;
+        }
+
+        const QString name = QString::fromUtf8(command.readAll()).trimmed();
+
+        if (name == QStringLiteral("eden-desktop") || name.startsWith(QStringLiteral("windowmanager"))) {
+            kill(static_cast<pid_t>(pid), SIGTERM);
+        }
+    }
+}
+
 xcb_connection_t *x11Connection()
 {
     auto *native = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
@@ -391,7 +524,8 @@ void DockBar::buildEntries()
         {"Depurador", "eden-debugger.svg", false, launchDebugger},
         {"", "", true, nullptr},
         {"Áreas", "", false, nullptr},
-        {"Ajustes", "eden-settings.svg", false, launchSettings}
+        {"Ajustes", "eden-settings.svg", false, launchSettings},
+        {"Compilar", "", false, nullptr}
     };
 
     entries_.reserve(static_cast<int>(std::size(specs)));
@@ -405,6 +539,9 @@ void DockBar::buildEntries()
         if (entry.label == QStringLiteral("Áreas")) {
             entry.desktopMenu = true;
             entry.icon = spacesIcon();
+        } else if (entry.label == QStringLiteral("Compilar")) {
+            entry.buildsDesktop = true;
+            entry.icon = buildIcon();
         } else if (!entry.separator) {
             entry.icon = loadIcon(QString::fromUtf8(spec.icon));
         }
@@ -484,27 +621,151 @@ void DockBar::relayout()
     }
 
     updateMask();
+
+    if (glass_.size() != barRect_.size()) {
+        refreshGlass();
+    }
+
+    compose();
     update();
+}
+
+void DockBar::compose()
+{
+    if (width() <= 0 || height() <= 0 || barRect_.isEmpty()) {
+        composed_ = QPixmap();
+        return;
+    }
+
+    constexpr int scale = 3;
+    QImage hi(width() * scale, height() * scale, QImage::Format_ARGB32_Premultiplied);
+    hi.fill(Qt::transparent);
+
+    QPainter painter(&hi);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    painter.scale(scale, scale);
+
+    if (!backdrop_.isNull()) {
+        painter.drawPixmap(0, 0, backdrop_);
+    } else {
+        painter.fillRect(rect(), QColor(32, 32, 40));
+    }
+
+    QPainterPath capsule;
+    capsule.addRoundedRect(barRect_.adjusted(0, 0, -1, -1), 22, 22);
+    painter.setClipPath(capsule);
+
+    if (!glass_.isNull()) {
+        painter.drawPixmap(barRect_.topLeft(), glass_);
+    }
+
+    painter.end();
+
+    composed_ = QPixmap::fromImage(hi.scaled(
+        size(),
+        Qt::IgnoreAspectRatio,
+        Qt::SmoothTransformation));
+}
+
+void DockBar::showEvent(QShowEvent *)
+{
+    refreshGlass();
+    compose();
+    update();
+}
+
+void DockBar::refreshGlass()
+{
+    glass_ = QPixmap();
+
+    if (barRect_.isEmpty() || screen_.isEmpty()) {
+        return;
+    }
+
+    const QString path = wallpaperFile();
+    const QPixmap source(path);
+    QImage plate(barRect_.size(), QImage::Format_ARGB32_Premultiplied);
+
+    if (source.isNull()) {
+        plate.fill(QColor(236, 236, 240));
+    } else {
+        const QPixmap covered = source.scaled(
+            screen_.size(),
+            Qt::KeepAspectRatioByExpanding,
+            Qt::SmoothTransformation);
+        const int originX = qMax(0, (covered.width() - screen_.width()) / 2);
+        const int originY = qMax(0, (covered.height() - screen_.height()) / 2);
+        const QPoint globalBar = mapToGlobal(barRect_.topLeft());
+        const QRect sample(
+            originX + globalBar.x() - screen_.x(),
+            originY + globalBar.y() - screen_.y(),
+            barRect_.width(),
+            barRect_.height());
+        QImage piece = covered.copy(sample).toImage();
+
+        if (piece.isNull()) {
+            plate.fill(QColor(236, 236, 240));
+        } else {
+            makeOpaque(piece);
+            const QImage small = piece.scaled(
+                qMax(1, piece.width() / 12),
+                qMax(1, piece.height() / 12),
+                Qt::IgnoreAspectRatio,
+                Qt::SmoothTransformation);
+            plate = small.scaled(piece.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            makeOpaque(plate);
+        }
+    }
+
+    QPainter frost(&plate);
+    frost.fillRect(plate.rect(), QColor(255, 255, 255, 148));
+
+    QLinearGradient sheen(0, 0, 0, plate.height());
+    sheen.setColorAt(0.0, QColor(255, 255, 255, 150));
+    sheen.setColorAt(0.38, QColor(255, 255, 255, 28));
+    sheen.setColorAt(1.0, QColor(255, 255, 255, 70));
+    frost.fillRect(plate.rect(), sheen);
+    frost.end();
+    makeOpaque(plate);
+
+    glass_ = QPixmap::fromImage(plate);
+
+    backdrop_ = QPixmap(size());
+    backdrop_.fill(QColor(32, 32, 40));
+
+    if (source.isNull()) {
+        return;
+    }
+
+    const QPixmap covered = source.scaled(
+        screen_.size(),
+        Qt::KeepAspectRatioByExpanding,
+        Qt::SmoothTransformation);
+    const int originX = qMax(0, (covered.width() - screen_.width()) / 2);
+    const int originY = qMax(0, (covered.height() - screen_.height()) / 2);
+    const QPoint globalTopLeft = mapToGlobal(QPoint(0, 0));
+    const QRect widgetSample(
+        originX + globalTopLeft.x() - screen_.x(),
+        originY + globalTopLeft.y() - screen_.y(),
+        width(),
+        height());
+    const QPixmap slice = covered.copy(widgetSample);
+
+    if (!slice.isNull()) {
+        backdrop_ = slice;
+    }
 }
 
 void DockBar::updateMask()
 {
-    QBitmap mask(size());
-    mask.fill(Qt::color0);
-
-    QPainter painter(&mask);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(Qt::color1);
-
-    QPainterPath path;
-    path.addRoundedRect(barRect_.adjusted(0, 0, -1, -1), 22, 22);
+    QRegion region(barRect_.adjusted(0, -2, 0, 2));
 
     if (!labelRect_.isNull()) {
-        path.addRoundedRect(labelRect_.adjusted(0, 0, -1, -1), 8, 8);
+        region = region.united(QRegion(labelRect_.adjusted(-3, -3, 3, 3)));
     }
 
-    painter.drawPath(path);
-    setMask(mask);
+    setMask(region);
 }
 
 int DockBar::entryAt(const QPoint &position) const
@@ -542,18 +803,18 @@ void DockBar::paintEvent(QPaintEvent *)
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     painter.setPen(Qt::NoPen);
 
-    painter.setBrush(QColor(36, 36, 40));
-    painter.drawRoundedRect(barRect_.adjusted(0, 0, -1, -1), 22, 22);
-    painter.setPen(QPen(QColor(255, 255, 255, 50), 1));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRoundedRect(barRect_.adjusted(1, 1, -2, -2), 21, 21);
+    if (!composed_.isNull()) {
+        painter.drawPixmap(0, 0, composed_);
+    } else if (!glass_.isNull()) {
+        painter.drawPixmap(barRect_.topLeft(), glass_);
+    }
 
     for (int index = 0; index < entries_.size(); ++index) {
         const Entry &entry = entries_.at(index);
         const QRect rect = iconRects_.at(index);
 
         if (entry.separator) {
-            painter.setPen(QPen(QColor(255, 255, 255, 70), 1));
+            painter.setPen(QPen(QColor(255, 255, 255, 150), 1));
             const int lineX = rect.center().x();
             painter.drawLine(lineX, barRect_.top() + 16, lineX, barRect_.bottom() - 16);
             continue;
@@ -619,7 +880,9 @@ void DockBar::mousePressEvent(QMouseEvent *event)
         return;
     }
 
-    if (entries_.at(index).desktopMenu || entries_.at(index).launch == nullptr) {
+    if (entries_.at(index).desktopMenu ||
+        entries_.at(index).buildsDesktop ||
+        entries_.at(index).launch == nullptr) {
         return;
     }
 
@@ -637,7 +900,16 @@ void DockBar::mouseReleaseEvent(QMouseEvent *event)
 
     const int index = entryAt(event->position().toPoint());
 
-    if (index < 0 || !entries_.at(index).desktopMenu) {
+    if (index < 0) {
+        return;
+    }
+
+    if (entries_.at(index).buildsDesktop) {
+        startBuild(index);
+        return;
+    }
+
+    if (!entries_.at(index).desktopMenu) {
         return;
     }
 
@@ -703,4 +975,166 @@ void DockBar::showDesktopMenu(int index)
             return;
         }
     }
+}
+
+void showBuildAbort(const QString &details)
+{
+    auto *dialog = new QDialog();
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(QStringLiteral("Compilação abortada"));
+    dialog->setWindowFlags(Qt::Dialog | Qt::WindowStaysOnTopHint);
+    dialog->resize(720, 420);
+
+    auto *layout = new QVBoxLayout(dialog);
+    auto *title = new QLabel(QStringLiteral(
+        "O source do desktop não é válido. A compilação foi abortada e o Eden aberto não foi trocado."));
+    title->setWordWrap(true);
+    layout->addWidget(title);
+
+    auto *text = new QPlainTextEdit(details);
+    text->setReadOnly(true);
+    text->setLineWrapMode(QPlainTextEdit::NoWrap);
+    layout->addWidget(text);
+
+    auto *closeButton = new QPushButton(QStringLiteral("Fechar"));
+    QObject::connect(closeButton, &QPushButton::clicked, dialog, &QDialog::close);
+    layout->addWidget(closeButton);
+    dialog->show();
+    dialog->raise();
+}
+
+bool locateDesktopSources(QString &projectDir, QString &buildDir, QString &error)
+{
+    const QDir binaryDir(QCoreApplication::applicationDirPath());
+    const QString cache = binaryDir.filePath(QStringLiteral("CMakeCache.txt"));
+    const QString listed = QDir(binaryDir.absoluteFilePath(QStringLiteral(".."))).filePath(QStringLiteral("CMakeLists.txt"));
+
+    if (QFileInfo::exists(cache)) {
+        buildDir = binaryDir.absolutePath();
+        projectDir = QDir(binaryDir.absoluteFilePath(QStringLiteral(".."))).absolutePath();
+    } else if (QFileInfo::exists(listed)) {
+        projectDir = QDir(binaryDir.absoluteFilePath(QStringLiteral(".."))).absolutePath();
+        buildDir = binaryDir.absolutePath();
+    } else {
+        error = QStringLiteral("Não encontrei o CMakeLists.txt nem a pasta de build do Eden.");
+        return false;
+    }
+
+    const QString source = QDir(projectDir).filePath(QStringLiteral("desktop/src/main.cpp"));
+
+    if (!QFileInfo::exists(QDir(projectDir).filePath(QStringLiteral("CMakeLists.txt"))) ||
+        !QFileInfo::exists(source)) {
+        error = QStringLiteral("O source do desktop não está em ") + projectDir;
+        return false;
+    }
+
+    if (!QFileInfo::exists(QDir(buildDir).filePath(QStringLiteral("CMakeCache.txt")))) {
+        error = QStringLiteral("A pasta de build não está pronta. Rode cmake -S . -B build antes.");
+        return false;
+    }
+
+    return true;
+}
+
+void DockBar::startBuild(int index)
+{
+    if (buildProcess_ != nullptr) {
+        return;
+    }
+
+    QString projectDir;
+    QString buildDir;
+    QString error;
+
+    if (!locateDesktopSources(projectDir, buildDir, error)) {
+        showBuildAbort(error);
+        return;
+    }
+
+    const QString cmake = QStandardPaths::findExecutable(QStringLiteral("cmake"));
+
+    if (cmake.isEmpty()) {
+        showBuildAbort(QStringLiteral("O cmake não está instalado."));
+        return;
+    }
+
+    buildIndex_ = index;
+    entries_[index].label = QStringLiteral("Compilando");
+    entries_[index].launched = true;
+    relayout();
+
+    buildProcess_ = new QProcess(this);
+    buildProcess_->setWorkingDirectory(projectDir);
+    buildProcess_->setProcessChannelMode(QProcess::MergedChannels);
+    connect(buildProcess_, &QProcess::finished, this, [this](int exitCode, QProcess::ExitStatus status) {
+        finishBuild(exitCode, status == QProcess::NormalExit);
+    });
+    connect(buildProcess_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
+        if (buildProcess_ == nullptr || buildProcess_->state() != QProcess::NotRunning) {
+            return;
+        }
+
+        finishBuild(1, false);
+    });
+    buildProcess_->start(cmake, {
+        QStringLiteral("--build"),
+        buildDir,
+        QStringLiteral("--target"),
+        QStringLiteral("eden-desktop"),
+        QStringLiteral("windowmanager-test"),
+        QStringLiteral("--parallel")
+    });
+}
+
+void DockBar::finishBuild(int exitCode, bool normalExit)
+{
+    if (buildIndex_ < 0) {
+        return;
+    }
+
+    QString output;
+
+    if (buildProcess_ != nullptr) {
+        output = QString::fromUtf8(buildProcess_->readAll());
+        buildProcess_->deleteLater();
+        buildProcess_ = nullptr;
+    }
+
+    const bool compiled = normalExit && exitCode == 0;
+
+    if (buildIndex_ >= 0 && buildIndex_ < entries_.size()) {
+        entries_[buildIndex_].label = QStringLiteral("Compilar");
+        entries_[buildIndex_].launched = compiled;
+        buildIndex_ = -1;
+        relayout();
+    }
+
+    if (!compiled) {
+        const QStringList lines = output.split(QChar('\n'));
+        const int begin = qMax(0, lines.size() - 40);
+        showBuildAbort(lines.mid(begin).join(QChar('\n')).trimmed());
+        return;
+    }
+
+    QString projectDir;
+    QString buildDir;
+    QString error;
+
+    if (!locateDesktopSources(projectDir, buildDir, error)) {
+        showBuildAbort(error);
+        return;
+    }
+
+    const QString windowManager = QDir(buildDir).filePath(QStringLiteral("windowmanager-test"));
+    const QString desktop = QCoreApplication::applicationFilePath();
+
+    if (!launchAfterDelay(windowManager, "0.3") || !launchAfterDelay(desktop, "0.8")) {
+        showBuildAbort(QStringLiteral(
+            "A compilação foi válida, mas o Eden não conseguiu reabrir o desktop novo. A sessão atual foi mantida."));
+        return;
+    }
+
+    stopDesktopTools();
+    DesktopWindow::allowSessionExit();
+    QCoreApplication::quit();
 }

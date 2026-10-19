@@ -3,18 +3,40 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <ios>
+
+namespace {
+
+bool environmentIs(const char *name, const char *expected)
+{
+    const char *value = std::getenv(name);
+    return value != nullptr && std::strcmp(value, expected) == 0;
+}
+
+bool edenSession()
+{
+    return std::getenv("EDEN_SESSION") != nullptr ||
+           environmentIs("XDG_CURRENT_DESKTOP", "Eden") ||
+           environmentIs("XDG_CURRENT_DESKTOP", "eden") ||
+           environmentIs("DESKTOP_SESSION", "eden") ||
+           environmentIs("XDG_SESSION_DESKTOP", "eden");
+}
+
+} // namespace
 
 int main()
 {
+    std::cout.setf(std::ios::unitbuf);
+    std::cerr.setf(std::ios::unitbuf);
+
     const char *display = std::getenv("DISPLAY");
     const bool hostDisplay =
         display == nullptr ||
         display[0] == '\0' ||
         std::strcmp(display, ":0") == 0 ||
         std::strcmp(display, ":0.0") == 0;
-    const bool session = std::getenv("EDEN_SESSION") != nullptr;
 
-    if (hostDisplay && !session) {
+    if (hostDisplay && !edenSession()) {
         std::cerr
             << "O gerenciador não vai assumir o display :0 a partir deste terminal.\n"
             << "Isso evita conflito com o gerenciador do Mint.\n"

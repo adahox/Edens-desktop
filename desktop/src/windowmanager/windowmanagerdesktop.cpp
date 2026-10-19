@@ -231,6 +231,17 @@ void WindowManager::noteDock(xcb_window_t window)
     }
 
     std::free(reply);
+
+    if (count >= 4) {
+        publishRootProperties();
+
+        for (const xcb_window_t desktop : desktopWindows_) {
+            fitDesktopWindow(desktop);
+        }
+
+        revealManagedFrames();
+    }
+
     xcb_flush(connection_);
 }
 
@@ -259,6 +270,49 @@ MonitorRect WindowManager::workArea() const
     }
 
     return area;
+}
+
+void WindowManager::revealManagedFrames()
+{
+    if (!isConnected()) {
+        return;
+    }
+
+    const MonitorRect area = workArea();
+    std::vector<xcb_window_t> clients;
+    clients.reserve(windows_.size());
+
+    for (const auto& [client, window] : windows_) {
+        (void)window;
+        clients.push_back(client);
+    }
+
+    for (const xcb_window_t client : clients) {
+        const auto iterator = windows_.find(client);
+
+        if (iterator == windows_.end() || iterator->second.minimized) {
+            continue;
+        }
+
+        ManagedWindow& window = iterator->second;
+        const auto cookie = xcb_get_geometry(connection_, window.frame);
+        xcb_get_geometry_reply_t* geometry =
+            xcb_get_geometry_reply(connection_, cookie, nullptr);
+
+        if (geometry == nullptr) {
+            continue;
+        }
+
+        const int16_t x = geometry->x;
+        const int16_t y = geometry->y;
+        const uint16_t width = geometry->width;
+        const uint16_t height = geometry->height;
+        std::free(geometry);
+
+        if (y < area.y) {
+            layoutFrame(window, x, area.y, width, height, !window.maximized);
+        }
+    }
 }
 
 void WindowManager::readWindowHints(ManagedWindow& window)

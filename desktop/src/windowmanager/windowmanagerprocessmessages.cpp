@@ -180,6 +180,11 @@ void WindowManager::processUnmapNotify(xcb_generic_event_t* event)
         return;
     }
 
+    if (iterator->second.ignoreUnmap > 0) {
+        --iterator->second.ignoreUnmap;
+        return;
+    }
+
     unmanageWindow(iterator->first);
 }
 
@@ -362,7 +367,12 @@ void WindowManager::processPointerMotion(xcb_generic_event_t* event)
     }
 
     const int16_t newX = static_cast<int16_t>(frameStartX_ + (motion->root_x - dragStartX_));
-    const int16_t newY = static_cast<int16_t>(frameStartY_ + (motion->root_y - dragStartY_));
+    int16_t newY = static_cast<int16_t>(frameStartY_ + (motion->root_y - dragStartY_));
+    const int16_t top = workArea().y;
+
+    if (newY < top) {
+        newY = top;
+    }
 
     const uint32_t values[] = {
         packedCoordinate(newX),
@@ -375,6 +385,10 @@ void WindowManager::processPointerMotion(xcb_generic_event_t* event)
         XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y,
         values
     );
+
+    if (ManagedWindow* window = findByFrame(draggingFrame_)) {
+        drawTitleBar(window->titleBar);
+    }
 
     xcb_flush(connection_);
 }
@@ -429,6 +443,11 @@ void WindowManager::processMapNotify(xcb_generic_event_t* event)
         reinterpret_cast<const xcb_map_notify_event_t*>(event);
 
     if (mapEvent->window == panel_ || mapEvent->window == supportingWindow_) {
+        return;
+    }
+
+    if (isDockWindow(mapEvent->window)) {
+        noteDock(mapEvent->window);
         return;
     }
 
@@ -760,6 +779,17 @@ void WindowManager::processResizeMotion(const xcb_motion_notify_event_t* motion)
         }
 
         newHeight = window->minimumHeight;
+    }
+
+    const int16_t top = workArea().y;
+
+    if (newY < top) {
+        newHeight -= static_cast<int32_t>(top - newY);
+        newY = top;
+
+        if (newHeight < window->minimumHeight) {
+            newHeight = window->minimumHeight;
+        }
     }
 
     layoutFrame(*window, newX, newY, static_cast<uint16_t>(newWidth), static_cast<uint16_t>(newHeight));

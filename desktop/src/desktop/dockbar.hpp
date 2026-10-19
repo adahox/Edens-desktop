@@ -8,6 +8,7 @@
 
 class QMouseEvent;
 class QPaintEvent;
+class QProcess;
 
 class DockBar final : public QWidget
 {
@@ -18,12 +19,15 @@ public:
 
 protected:
     void paintEvent(QPaintEvent *event) override;
+    void showEvent(QShowEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void leaveEvent(QEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
 
     void showDesktopMenu(int index);
+    void startBuild(int index);
+    void finishBuild(int exitCode, bool normalExit);
 
 private:
     struct Entry
@@ -32,6 +36,7 @@ private:
         QPixmap icon;
         bool separator = false;
         bool desktopMenu = false;
+        bool buildsDesktop = false;
         bool launched = false;
         bool (*launch)() = nullptr;
     };
@@ -39,6 +44,8 @@ private:
     void buildEntries();
     void relayout();
     void updateMask();
+    void refreshGlass();
+    void compose();
     [[nodiscard]] int iconSize(int index) const;
     [[nodiscard]] int entryAt(const QPoint &position) const;
 
@@ -47,6 +54,11 @@ private:
     QVector<QRect> iconRects_;
     QRect barRect_;
     QRect labelRect_;
+    QPixmap glass_;
+    QPixmap backdrop_;
+    QPixmap composed_;
+    QProcess *buildProcess_ = nullptr;
+    int buildIndex_ = -1;
     int hover_ = -1;
 
     static constexpr int kIconRest = 48;

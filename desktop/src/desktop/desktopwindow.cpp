@@ -26,6 +26,11 @@
 #include <QApplication>
 #include <QStyle>
 #include <QStyledItemDelegate>
+#include <QElapsedTimer>
+#include <QImage>
+#include <QRadialGradient>
+#include <algorithm>
+#include <cmath>
 #include "filemanager/filemanagerwindow.hpp"
 
 namespace {
@@ -99,6 +104,176 @@ public:
 };
 
 }  // namespace
+
+class DesktopRipple final : public QWidget
+{
+public:
+    explicit DesktopRipple(QWidget *parent)
+        : QWidget(parent)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+        setAttribute(Qt::WA_OpaquePaintEvent);
+        hide();
+        timer_.setInterval(16);
+        connect(&timer_, &QTimer::timeout, this, [this]() {
+            advance();
+        });
+    }
+
+    void drop(const QPoint &position)
+    {
+        QWidget *desktop = parentWidget();
+
+        if (desktop == nullptr) {
+            return;
+        }
+
+        hide();
+        const qreal ratio = desktop->devicePixelRatioF();
+        source_ = desktop->grab().toImage().convertToFormat(QImage::Format_RGB32);
+        source_.setDevicePixelRatio(1);
+
+        if (source_.isNull()) {
+            return;
+        }
+
+        origin_ = QPointF(position.x() * ratio, position.y() * ratio);
+        ratio_ = ratio;
+        clock_.restart();
+        setGeometry(desktop->rect());
+        frame_ = source_;
+        raise();
+        show();
+        timer_.start();
+        advance();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        Q_UNUSED(event);
+
+        if (frame_.isNull()) {
+            return;
+        }
+
+        QPainter painter(this);
+        frame_.setDevicePixelRatio(ratio_);
+        painter.drawImage(QPoint(0, 0), frame_);
+    }
+
+private:
+    static QRgb sample(const QImage &image, double x, double y)
+    {
+        const int width = image.width();
+        const int height = image.height();
+        x = std::clamp(x, 0.0, static_cast<double>(width - 1));
+        y = std::clamp(y, 0.0, static_cast<double>(height - 1));
+        const int x0 = static_cast<int>(x);
+        const int y0 = static_cast<int>(y);
+        const int x1 = std::min(x0 + 1, width - 1);
+        const int y1 = std::min(y0 + 1, height - 1);
+        const double tx = x - x0;
+        const double ty = y - y0;
+        const auto *row0 = reinterpret_cast<const QRgb *>(image.constScanLine(y0));
+        const auto *row1 = reinterpret_cast<const QRgb *>(image.constScanLine(y1));
+
+        const auto mix = [&](int shift) {
+            const int c00 = (row0[x0] >> shift) & 255;
+            const int c10 = (row0[x1] >> shift) & 255;
+            const int c01 = (row1[x0] >> shift) & 255;
+            const int c11 = (row1[x1] >> shift) & 255;
+            const double top = c00 + (c10 - c00) * tx;
+            const double bottom = c01 + (c11 - c01) * tx;
+            return static_cast<int>(top + (bottom - top) * ty);
+        };
+
+        return qRgb(mix(16), mix(8), mix(0));
+    }
+
+    void advance()
+    {
+        constexpr double duration = 1.25;
+        const double age = clock_.elapsed() / 1000.0;
+        QWidget *desktop = parentWidget();
+
+        if (desktop == nullptr || source_.isNull() || age >= duration ||
+            desktop->size() != size()) {
+            timer_.stop();
+            hide();
+            return;
+        }
+
+        frame_ = source_.copy();
+        const int width = frame_.width();
+        const int height = frame_.height();
+        const double front = age * 860.0;
+        const double fade = 1.0 - age / duration;
+        const double amplitude = 22.0 * fade;
+        const double band = 36.0 + age * 24.0;
+        const double inner = std::max(0.0, front - band * 3.4);
+        const double outer = front + band * 1.7;
+        const int minY = std::clamp(static_cast<int>(origin_.y() - outer) - 2, 0, height);
+        const int maxY = std::clamp(static_cast<int>(origin_.y() + outer) + 3, 0, height);
+        const int minX = std::clamp(static_cast<int>(origin_.x() - outer) - 2, 0, width);
+        const int maxX = std::clamp(static_cast<int>(origin_.x() + outer) + 3, 0, width);
+        const double inner2 = inner * inner;
+        const double outer2 = outer * outer;
+
+        for (int y = minY; y < maxY; ++y) {
+            auto *destination = reinterpret_cast<QRgb *>(frame_.scanLine(y));
+            const double dy = y - origin_.y();
+
+            for (int x = minX; x < maxX; ++x) {
+                const double dx = x - origin_.x();
+                const double dist2 = dx * dx + dy * dy;
+
+                if (dist2 < inner2 || dist2 > outer2) {
+                    continue;
+                }
+
+                const double dist = std::sqrt(dist2);
+                const double fromFront = dist - front;
+                const double envelope = std::exp(-(fromFront * fromFront) / (2.0 * band * band));
+                const double trailOffset = fromFront + band * 1.35;
+                const double trail = std::exp(-(trailOffset * trailOffset) / (2.0 * band * band));
+                const double shape = envelope + 0.62 * trail;
+                const double wave = std::sin(fromFront * 0.145) * amplitude * shape;
+                const double light = std::cos(fromFront * 0.145) * 46.0 * fade * envelope;
+                const double scale = dist > 0.001 ? wave / dist : 0.0;
+                const QRgb pixel = sample(source_, x + dx * scale, y + dy * scale);
+                destination[x] = qRgb(
+                    std::clamp(qRed(pixel) + static_cast<int>(light), 0, 255),
+                    std::clamp(qGreen(pixel) + static_cast<int>(light), 0, 255),
+                    std::clamp(qBlue(pixel) + static_cast<int>(light * 1.08), 0, 255));
+            }
+        }
+
+        if (age < 0.22) {
+            QPainter painter(&frame_);
+            painter.setRenderHint(QPainter::Antialiasing);
+            const double splash = 1.0 - age / 0.22;
+            const double radius = 8.0 + age * 110.0;
+            QRadialGradient gradient(origin_, radius);
+            gradient.setColorAt(0.0, QColor(255, 255, 255, static_cast<int>(160 * splash)));
+            gradient.setColorAt(0.42, QColor(198, 224, 255, static_cast<int>(80 * splash)));
+            gradient.setColorAt(1.0, QColor(255, 255, 255, 0));
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(gradient);
+            painter.drawEllipse(origin_, radius, radius);
+        }
+
+        update();
+    }
+
+    QImage source_;
+    QImage frame_;
+    QPointF origin_;
+    qreal ratio_ = 1;
+    QElapsedTimer clock_;
+    QTimer timer_;
+};
 
 #include <QDesktopServices>
 #include <QUrl>
@@ -200,6 +375,7 @@ void DesktopWindow::setupFileArea()
         &QListView::customContextMenuRequested,
         this,
         [this](const QPoint &position) {
+            playRipple(fileView_->viewport()->mapTo(this, position));
             showDesktopContextMenu(
                 fileView_->viewport()->mapToGlobal(position)
             );
@@ -368,14 +544,36 @@ void DesktopWindow::paintEvent(QPaintEvent *event)
 }
 
 
+bool DesktopWindow::sessionExitAllowed_ = false;
+
+void DesktopWindow::allowSessionExit()
+{
+    sessionExitAllowed_ = true;
+}
+
 void DesktopWindow::closeEvent(QCloseEvent *event)
 {
+    if (sessionExitAllowed_) {
+        event->accept();
+        return;
+    }
+
     event->ignore();
 }
 
 void DesktopWindow::contextMenuEvent(QContextMenuEvent *event)
 {
+    playRipple(event->pos());
     showDesktopContextMenu(event->globalPos());
+}
+
+void DesktopWindow::playRipple(const QPoint &localPosition)
+{
+    if (ripple_ == nullptr) {
+        ripple_ = new DesktopRipple(this);
+    }
+
+    ripple_->drop(localPosition);
 }
 
 void DesktopWindow::showDesktopContextMenu(
@@ -440,6 +638,7 @@ void DesktopWindow::showDesktopContextMenu(
     }
 
     if (selectedAction == quitAction) {
+        allowSessionExit();
         QApplication::quit();
     }
 }
@@ -485,4 +684,5 @@ void DesktopWindow::navigateBack()
     }
 
     revealDesktopFiles();
+}
 }

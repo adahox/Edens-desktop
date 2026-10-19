@@ -1,9 +1,22 @@
 #include "windowmanager.hpp"
 #include "titlebarlayout.hpp"
 
+#include <cairo/cairo.h>
+#include <jpeglib.h>
+
+#include <algorithm>
+#include <cmath>
+#include <csetjmp>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <unistd.h>
 
 namespace {
 
@@ -46,119 +59,434 @@ void grabHotkey(
 
 namespace {
 
-uint32_t colorPixel(
-    xcb_connection_t* connection,
-    xcb_colormap_t colormap,
-    uint16_t red,
-    uint16_t green,
-    uint16_t blue,
-    uint32_t fallback)
+struct Wallpaper
 {
-    const auto cookie = xcb_alloc_color(
-        connection,
-        colormap,
-        red,
-        green,
-        blue);
+    int width = 0;
+    int height = 0;
+    std::vector<std::uint8_t> rgb;
+    bool ready = false;
+};
 
-    xcb_alloc_color_reply_t* reply =
-        xcb_alloc_color_reply(connection, cookie, nullptr);
+struct JpegFailure
+{
+    jpeg_error_mgr base;
+    jmp_buf jump;
+};
 
-    if (reply == nullptr) {
-        return fallback;
+void jpegAbort(j_common_ptr info)
+{
+    auto* failure = reinterpret_cast<JpegFailure*>(info->err);
+    longjmp(failure->jump, 1);
+}
+
+std::string executableDirectory()
+{
+    char buffer[4096];
+    const ssize_t length = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+
+    if (length <= 0) {
+        return {};
     }
 
-    const uint32_t pixel = reply->pixel;
-    std::free(reply);
-    return pixel;
+    buffer[length] = '\0';
+    const std::string path(buffer);
+    const auto slash = path.find_last_of('/');
+
+    if (slash == std::string::npos) {
+        return {};
+    }
+
+    return path.substr(0, slash);
 }
 
-void fillButton(
-    xcb_connection_t* connection,
-    xcb_window_t frame,
-    xcb_gcontext_t gc,
-    const TitleButtonLayout& button)
+bool loadJpeg(const std::string& path, Wallpaper& image)
 {
-    const xcb_rectangle_t rectangle = {
-        button.x,
-        button.y,
-        kButtonSize,
-        kButtonSize
+    FILE* file = std::fopen(path.c_str(), "rb");
+
+    if (file == nullptr) {
+        return false;
+    }
+
+    jpeg_decompress_struct info{};
+    JpegFailure failure{};
+    info.err = jpeg_std_error(&failure.base);
+    failure.base.error_exit = jpegAbort;
+
+    if (setjmp(failure.jump) != 0) {
+        jpeg_destroy_decompress(&info);
+        std::fclose(file);
+        return false;
+    }
+
+    jpeg_create_decompress(&info);
+    jpeg_stdio_src(&info, file);
+    jpeg_read_header(&info, TRUE);
+    info.out_color_space = JCS_RGB;
+    jpeg_start_decompress(&info);
+
+    image.width = static_cast<int>(info.output_width);
+    image.height = static_cast<int>(info.output_height);
+    image.rgb.assign(static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) * 3, 0);
+
+    while (info.output_scanline < info.output_height) {
+        std::uint8_t* row = image.rgb.data() +
+            static_cast<std::size_t>(info.output_scanline) * static_cast<std::size_t>(image.width) * 3;
+        jpeg_read_scanlines(&info, &row, 1);
+    }
+
+    jpeg_finish_decompress(&info);
+    jpeg_destroy_decompress(&info);
+    std::fclose(file);
+    return image.width > 0 && image.height > 0;
+}
+
+Wallpaper& desktopWallpaper()
+{
+    static Wallpaper image;
+
+    if (image.ready || image.width < 0) {
+        return image;
+    }
+
+    const std::string directory = executableDirectory();
+    const std::string candidates[] = {
+        directory + "/../assets/wallpapers/default.jpg",
+        directory + "/assets/wallpapers/default.jpg"
     };
 
-    xcb_poly_fill_rectangle(connection, frame, gc, 1, &rectangle);
+    for (const std::string& candidate : candidates) {
+        if (loadJpeg(candidate, image)) {
+            image.ready = true;
+            return image;
+        }
+    }
+
+    image.width = -1;
+    return image;
 }
 
-void drawMinimizeGlyph(
-    xcb_connection_t* connection,
-    xcb_window_t frame,
-    xcb_gcontext_t gc,
-    const TitleButtonLayout& button)
+void wallpaperPixel(
+    const Wallpaper& image,
+    int screenX,
+    int screenY,
+    int screenWidth,
+    int screenHeight,
+    std::uint8_t& red,
+    std::uint8_t& green,
+    std::uint8_t& blue)
 {
-    const int16_t y = static_cast<int16_t>(button.y + (kButtonSize / 2));
-    const xcb_segment_t segment = {
-        static_cast<int16_t>(button.x + 5),
-        y,
-        static_cast<int16_t>(button.x + kButtonSize - 5),
-        y
-    };
-
-    xcb_poly_segment(connection, frame, gc, 1, &segment);
+    const double scale = std::max(
+        static_cast<double>(screenWidth) / image.width,
+        static_cast<double>(screenHeight) / image.height);
+    const double originX = (image.width * scale - screenWidth) / 2.0;
+    const double originY = (image.height * scale - screenHeight) / 2.0;
+    int imageX = static_cast<int>((originX + screenX) / scale);
+    int imageY = static_cast<int>((originY + screenY) / scale);
+    imageX = std::clamp(imageX, 0, image.width - 1);
+    imageY = std::clamp(imageY, 0, image.height - 1);
+    const std::uint8_t* pixel = image.rgb.data() +
+        (static_cast<std::size_t>(imageY) * static_cast<std::size_t>(image.width) +
+         static_cast<std::size_t>(imageX)) * 3;
+    red = pixel[0];
+    green = pixel[1];
+    blue = pixel[2];
 }
 
-void drawMaximizeGlyph(
-    xcb_connection_t* connection,
-    xcb_window_t frame,
-    xcb_gcontext_t gc,
-    const TitleButtonLayout& button,
-    bool maximized)
+std::uint8_t mixWhite(std::uint8_t color, int alpha)
 {
-    if (maximized) {
-        const xcb_rectangle_t back = {
-            static_cast<int16_t>(button.x + 7),
-            static_cast<int16_t>(button.y + 4),
-            8,
-            8
-        };
-        const xcb_rectangle_t front = {
-            static_cast<int16_t>(button.x + 4),
-            static_cast<int16_t>(button.y + 7),
-            8,
-            8
-        };
+    return static_cast<std::uint8_t>((color * (255 - alpha) + 255 * alpha) / 255);
+}
 
-        xcb_poly_rectangle(connection, frame, gc, 1, &back);
-        xcb_poly_rectangle(connection, frame, gc, 1, &front);
+bool fillTitleGlass(
+    const xcb_screen_t* screen,
+    int16_t rootX,
+    int16_t rootY,
+    uint16_t width,
+    uint16_t height,
+    bool focused,
+    std::vector<std::uint8_t>& pixels)
+{
+    const Wallpaper& image = desktopWallpaper();
+
+    if (!image.ready || width == 0 || height == 0 || screen->root_depth < 24) {
+        return false;
+    }
+
+    const int columns = std::max(1, static_cast<int>(width) / 10);
+    const int rows = std::max(1, static_cast<int>(height) / 6);
+    std::vector<std::uint8_t> coarse(static_cast<std::size_t>(columns * rows * 3));
+
+    for (int row = 0; row < rows; ++row) {
+        for (int column = 0; column < columns; ++column) {
+            const int sampleX = rootX + column * static_cast<int>(width) / columns;
+            const int sampleY = rootY + row * static_cast<int>(height) / rows;
+            std::uint8_t red = 0;
+            std::uint8_t green = 0;
+            std::uint8_t blue = 0;
+            wallpaperPixel(
+                image,
+                sampleX,
+                sampleY,
+                screen->width_in_pixels,
+                screen->height_in_pixels,
+                red,
+                green,
+                blue);
+            std::uint8_t* pixel = coarse.data() + static_cast<std::size_t>((row * columns + column) * 3);
+            pixel[0] = red;
+            pixel[1] = green;
+            pixel[2] = blue;
+        }
+    }
+
+    const std::size_t stride = static_cast<std::size_t>(width) * 4;
+    pixels.assign(stride * height, 0);
+    const int veil = focused ? 132 : 188;
+
+    for (int y = 0; y < static_cast<int>(height); ++y) {
+        const float fy = (static_cast<float>(y) + 0.5f) * static_cast<float>(rows) /
+            static_cast<float>(height) - 0.5f;
+        const int y0 = std::clamp(static_cast<int>(std::floor(fy)), 0, rows - 1);
+        const int y1 = std::min(y0 + 1, rows - 1);
+        const float yBlend = std::clamp(fy - static_cast<float>(y0), 0.f, 1.f);
+        const int sheen = y < height / 3 ? 70 : 24;
+
+        for (int x = 0; x < static_cast<int>(width); ++x) {
+            const float fx = (static_cast<float>(x) + 0.5f) * static_cast<float>(columns) /
+                static_cast<float>(width) - 0.5f;
+            const int x0 = std::clamp(static_cast<int>(std::floor(fx)), 0, columns - 1);
+            const int x1 = std::min(x0 + 1, columns - 1);
+            const float xBlend = std::clamp(fx - static_cast<float>(x0), 0.f, 1.f);
+            const std::uint8_t* p00 = coarse.data() + static_cast<std::size_t>((y0 * columns + x0) * 3);
+            const std::uint8_t* p10 = coarse.data() + static_cast<std::size_t>((y0 * columns + x1) * 3);
+            const std::uint8_t* p01 = coarse.data() + static_cast<std::size_t>((y1 * columns + x0) * 3);
+            const std::uint8_t* p11 = coarse.data() + static_cast<std::size_t>((y1 * columns + x1) * 3);
+            std::uint8_t* destination = pixels.data() + static_cast<std::size_t>(y) * stride +
+                static_cast<std::size_t>(x) * 4;
+
+            for (int channel = 0; channel < 3; ++channel) {
+                const float top = p00[channel] + (p10[channel] - p00[channel]) * xBlend;
+                const float bottom = p01[channel] + (p11[channel] - p01[channel]) * xBlend;
+                const auto blended = static_cast<std::uint8_t>(top + (bottom - top) * yBlend);
+                destination[channel] = mixWhite(mixWhite(blended, veil), sheen);
+            }
+
+            destination[3] = 0;
+            const std::uint8_t red = destination[0];
+            destination[0] = destination[2];
+            destination[2] = red;
+        }
+    }
+
+    return true;
+}
+
+void fillSolidBar(
+    uint16_t width,
+    uint16_t height,
+    bool focused,
+    std::vector<std::uint8_t>& pixels)
+{
+    const std::uint8_t red = focused ? 0x17 : 0x12;
+    const std::uint8_t green = focused ? 0x1C : 0x14;
+    const std::uint8_t blue = focused ? 0x28 : 0x1C;
+    pixels.assign(static_cast<std::size_t>(width) * height * 4, 0);
+
+    for (std::size_t index = 0; index < pixels.size(); index += 4) {
+        pixels[index] = blue;
+        pixels[index + 1] = green;
+        pixels[index + 2] = red;
+    }
+}
+
+void roundedRect(cairo_t* context, double x, double y, double width, double height, double radius)
+{
+    cairo_new_sub_path(context);
+    cairo_arc(context, x + width - radius, y + radius, radius, -1.5707963, 0);
+    cairo_arc(context, x + width - radius, y + height - radius, radius, 0, 1.5707963);
+    cairo_arc(context, x + radius, y + height - radius, radius, 1.5707963, 3.1415927);
+    cairo_arc(context, x + radius, y + radius, radius, 3.1415927, 4.712389);
+    cairo_close_path(context);
+}
+
+std::string titleThatFits(cairo_t* context, std::string title, double maxWidth)
+{
+    cairo_text_extents_t extents{};
+    cairo_text_extents(context, title.c_str(), &extents);
+
+    if (extents.x_advance <= maxWidth) {
+        return title;
+    }
+
+    while (!title.empty()) {
+        title.pop_back();
+
+        while (!title.empty() &&
+               (static_cast<unsigned char>(title.back()) & 0xC0) == 0x80) {
+            title.pop_back();
+        }
+
+        const std::string candidate = title + "...";
+        cairo_text_extents(context, candidate.c_str(), &extents);
+
+        if (extents.x_advance <= maxWidth) {
+            return candidate;
+        }
+    }
+
+    return {};
+}
+
+void strokeIcon(cairo_t* context, double red, double green, double blue)
+{
+    cairo_set_source_rgb(context, red, green, blue);
+    cairo_set_line_width(context, 1.6);
+    cairo_set_line_cap(context, CAIRO_LINE_CAP_ROUND);
+    cairo_set_line_join(context, CAIRO_LINE_JOIN_ROUND);
+    cairo_stroke(context);
+}
+
+void paintTitleChrome(
+    std::vector<std::uint8_t>& pixels,
+    uint16_t width,
+    uint16_t height,
+    const std::string& title,
+    bool focused,
+    bool maximized,
+    bool glass)
+{
+    if (width == 0 || height == 0 || pixels.size() < static_cast<std::size_t>(width) * height * 4) {
         return;
     }
 
-    const xcb_rectangle_t rectangle = {
-        static_cast<int16_t>(button.x + 4),
-        static_cast<int16_t>(button.y + 4),
-        static_cast<uint16_t>(kButtonSize - 8),
-        static_cast<uint16_t>(kButtonSize - 8)
+    cairo_surface_t* surface = cairo_image_surface_create_for_data(
+        pixels.data(),
+        CAIRO_FORMAT_RGB24,
+        width,
+        height,
+        static_cast<int>(static_cast<std::size_t>(width) * 4));
+
+    if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surface);
+        return;
+    }
+
+    cairo_t* context = cairo_create(surface);
+    const double ink = glass ? (focused ? 0.110 : 0.227) : (focused ? 0.957 : 0.545);
+    const double accentRed = focused ? 0.478 : 0.165;
+    const double accentGreen = focused ? 0.635 : 0.180;
+    const double accentBlue = focused ? 1.0 : 0.227;
+
+    cairo_set_source_rgb(context, accentRed, accentGreen, accentBlue);
+    cairo_rectangle(context, 12, (height - 14) / 2.0, 3, 14);
+    cairo_fill(context);
+    cairo_rectangle(context, 0, height - 1.0, width, 1);
+    cairo_fill(context);
+
+    const TitleBarButtons buttons = titleBarButtons(width);
+    cairo_select_font_face(
+        context,
+        "Sans",
+        CAIRO_FONT_SLANT_NORMAL,
+        CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_set_font_size(context, 13);
+    const double textLimit = std::max(0.0, static_cast<double>(buttons.minimize.x) - 30.0);
+    const std::string fitted = titleThatFits(context, title, textLimit);
+    cairo_text_extents_t extents{};
+    cairo_text_extents(context, fitted.c_str(), &extents);
+    cairo_set_source_rgb(context, ink, ink, ink);
+    cairo_move_to(
+        context,
+        22,
+        (height - extents.height) / 2.0 - extents.y_bearing);
+    cairo_show_text(context, fitted.c_str());
+
+    const auto center = [](const TitleButtonLayout& button) {
+        return std::pair<double, double>{
+            button.x + kButtonSize / 2.0,
+            button.y + kButtonSize / 2.0
+        };
     };
 
-    xcb_poly_rectangle(connection, frame, gc, 1, &rectangle);
+    const auto [minimizeX, minimizeY] = center(buttons.minimize);
+    cairo_move_to(context, minimizeX - 5.0, minimizeY);
+    cairo_line_to(context, minimizeX + 5.0, minimizeY);
+    strokeIcon(context, ink, ink, ink);
+
+    const auto [maximizeX, maximizeY] = center(buttons.maximize);
+    cairo_set_source_rgb(context, ink, ink, ink);
+    cairo_set_line_width(context, 1.5);
+
+    if (maximized) {
+        cairo_rectangle(context, maximizeX - 1.5, maximizeY - 4.5, 7, 7);
+        cairo_stroke(context);
+        cairo_rectangle(context, maximizeX - 4.5, maximizeY - 1.5, 7, 7);
+        cairo_stroke(context);
+    } else {
+        cairo_rectangle(context, maximizeX - 4.5, maximizeY - 4.5, 9, 9);
+        cairo_stroke(context);
+    }
+
+    const double closeX = buttons.close.x + 1.0;
+    const double closeY = buttons.close.y + 1.0;
+    roundedRect(context, closeX, closeY, 16, 16, 4);
+    cairo_set_source_rgb(context, 0.820, 0.416, 0.416);
+    cairo_fill(context);
+
+    const double closeCenterX = buttons.close.x + kButtonSize / 2.0;
+    const double closeCenterY = buttons.close.y + kButtonSize / 2.0;
+    cairo_move_to(context, closeCenterX - 3.2, closeCenterY - 3.2);
+    cairo_line_to(context, closeCenterX + 3.2, closeCenterY + 3.2);
+    cairo_move_to(context, closeCenterX + 3.2, closeCenterY - 3.2);
+    cairo_line_to(context, closeCenterX - 3.2, closeCenterY + 3.2);
+    strokeIcon(context, 1, 1, 1);
+
+    cairo_destroy(context);
+    cairo_surface_flush(surface);
+    cairo_surface_destroy(surface);
 }
 
-void drawCloseGlyph(
-    xcb_connection_t* connection,
-    xcb_window_t frame,
-    xcb_gcontext_t gc,
-    const TitleButtonLayout& button)
+xcb_cursor_t loadLeftPointer(xcb_connection_t* connection)
 {
-    const int16_t left = static_cast<int16_t>(button.x + 5);
-    const int16_t right = static_cast<int16_t>(button.x + kButtonSize - 5);
-    const int16_t top = static_cast<int16_t>(button.y + 5);
-    const int16_t bottom = static_cast<int16_t>(button.y + kButtonSize - 5);
+    constexpr char kCursorFont[] = "cursor";
+    constexpr uint16_t kLeftPointer = 68;
 
-    const xcb_segment_t segments[] = {
-        {left, top, right, bottom},
-        {right, top, left, bottom}
-    };
+    const xcb_font_t font = xcb_generate_id(connection);
+    const auto opened = xcb_open_font_checked(
+        connection,
+        font,
+        static_cast<uint16_t>(sizeof(kCursorFont) - 1),
+        kCursorFont);
+    xcb_generic_error_t* error = xcb_request_check(connection, opened);
 
-    xcb_poly_segment(connection, frame, gc, 2, segments);
+    if (error != nullptr) {
+        std::free(error);
+        return XCB_NONE;
+    }
+
+    const xcb_cursor_t cursor = xcb_generate_id(connection);
+    const auto created = xcb_create_glyph_cursor_checked(
+        connection,
+        cursor,
+        font,
+        font,
+        kLeftPointer,
+        static_cast<uint16_t>(kLeftPointer + 1),
+        0,
+        0,
+        0,
+        65535,
+        65535,
+        65535);
+    error = xcb_request_check(connection, created);
+    xcb_close_font(connection, font);
+
+    if (error != nullptr) {
+        std::free(error);
+        return XCB_NONE;
+    }
+
+    return cursor;
 }
 
 }  // namespace
@@ -207,6 +535,16 @@ bool WindowManager::connect()
     }
 
     screen_ = iterator.data;
+    pointerCursor_ = loadLeftPointer(connection_);
+
+    if (pointerCursor_ != XCB_NONE) {
+        xcb_change_window_attributes(
+            connection_,
+            screen_->root,
+            XCB_CW_CURSOR,
+            &pointerCursor_);
+        xcb_flush(connection_);
+    }
 
     return true;
 }
@@ -266,13 +604,16 @@ bool WindowManager::acquireControl()
         XCB_MOD_MASK_CONTROL | XCB_MOD_MASK_1,
         kKeyRight);
 
-    // Escanear janelas já existentes na tela antes do Eden rodar
+    // Escanear janelas já existentes na tela antes do Eden rodar.
+    // As barras reservam espaço antes das janelas serem decoradas.
     const auto treeCookie = xcb_query_tree(connection_, screen_->root);
     xcb_query_tree_reply_t* tree = xcb_query_tree_reply(connection_, treeCookie, nullptr);
 
     if (tree != nullptr) {
         const int count = xcb_query_tree_children_length(tree);
         xcb_window_t* children = xcb_query_tree_children(tree);
+        std::vector<xcb_window_t> clientsToManage;
+        clientsToManage.reserve(static_cast<std::size_t>(count));
 
         for (int i = 0; i < count; ++i) {
             const auto attrCookie = xcb_get_window_attributes(connection_, children[i]);
@@ -291,13 +632,18 @@ bool WindowManager::acquireControl()
                 } else if (!ownWindow &&
                            !attr->override_redirect &&
                            attr->map_state == XCB_MAP_STATE_VIEWABLE) {
-                    manageWindow(children[i]);
+                    clientsToManage.push_back(children[i]);
                 }
 
                 std::free(attr);
             }
         }
+
         std::free(tree);
+
+        for (const xcb_window_t client : clientsToManage) {
+            manageWindow(client);
+        }
     }
 
     setupDesktopIntegration();
@@ -316,6 +662,14 @@ void WindowManager::disconnect()
 
     controlAcquired_ = false;
     screen_ = nullptr;
+
+    if (connection_ != nullptr &&
+        pointerCursor_ != XCB_NONE &&
+        xcb_connection_has_error(connection_) == 0) {
+        xcb_free_cursor(connection_, pointerCursor_);
+    }
+
+    pointerCursor_ = XCB_NONE;
     focusedFrame_ = XCB_WINDOW_NONE;
     draggingFrame_ = XCB_WINDOW_NONE;
     resizingFrame_ = XCB_WINDOW_NONE;
@@ -407,6 +761,7 @@ bool WindowManager::manageWindow(xcb_window_t client)
     }
 
     const bool overrideRedirect = attributes->override_redirect != 0;
+    const bool wasMapped = attributes->map_state != XCB_MAP_STATE_UNMAPPED;
     std::free(attributes);
 
     if (overrideRedirect || isDesktopWindow(client) || isDockWindow(client)) {
@@ -433,17 +788,27 @@ bool WindowManager::manageWindow(xcb_window_t client)
     const uint16_t width = geometry->width;
     const uint16_t height = geometry->height;
     const int16_t x = geometry->x;
-    const int16_t y = geometry->y;
+    int16_t y = geometry->y;
 
     std::free(geometry);
+
+    const MonitorRect area = workArea();
+
+    if (y < area.y) {
+        y = area.y;
+    }
 
     const xcb_window_t frame = xcb_generate_id(connection_);
     const uint32_t frameValues[] = {
         screen_->black_pixel,
         XCB_EVENT_MASK_BUTTON_PRESS |
             XCB_EVENT_MASK_BUTTON_RELEASE |
-            XCB_EVENT_MASK_POINTER_MOTION
+            XCB_EVENT_MASK_POINTER_MOTION,
+        pointerCursor_
     };
+    const uint32_t frameMask = XCB_CW_BACK_PIXEL |
+        XCB_CW_EVENT_MASK |
+        (pointerCursor_ != XCB_NONE ? XCB_CW_CURSOR : 0);
 
     xcb_create_window(
         connection_,
@@ -457,7 +822,7 @@ bool WindowManager::manageWindow(xcb_window_t client)
         0,
         XCB_WINDOW_CLASS_INPUT_OUTPUT,
         screen_->root_visual,
-        XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK,
+        frameMask,
         frameValues
     );
 
@@ -467,7 +832,8 @@ bool WindowManager::manageWindow(xcb_window_t client)
         XCB_EVENT_MASK_EXPOSURE |
             XCB_EVENT_MASK_BUTTON_PRESS |
             XCB_EVENT_MASK_BUTTON_RELEASE |
-            XCB_EVENT_MASK_POINTER_MOTION
+            XCB_EVENT_MASK_POINTER_MOTION,
+        pointerCursor_
     };
 
     xcb_create_window(
@@ -482,7 +848,7 @@ bool WindowManager::manageWindow(xcb_window_t client)
         0,
         XCB_WINDOW_CLASS_INPUT_OUTPUT,
         screen_->root_visual,
-        XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK,
+        frameMask,
         titleBarValues
     );
 
@@ -524,11 +890,19 @@ bool WindowManager::manageWindow(xcb_window_t client)
     xcb_map_window(connection_, client);
     xcb_map_window(connection_, frame);
 
+    const uint32_t titleAbove[] = {XCB_STACK_MODE_ABOVE};
+    xcb_configure_window(
+        connection_,
+        titleBar,
+        XCB_CONFIG_WINDOW_STACK_MODE,
+        titleAbove);
+
     ManagedWindow& managed =
         windows_.emplace(client, ManagedWindow{client, frame, titleBar})
             .first->second;
 
     managed.desktop = currentDesktop_;
+    managed.ignoreUnmap = wasMapped ? 1 : 0;
     readWindowHints(managed);
     placeTransient(managed);
 
@@ -615,105 +989,35 @@ void WindowManager::drawTitleBar(xcb_window_t titleBar)
     const bool focused =
         managed != nullptr && managed->frame == focusedFrame_;
 
-    const uint32_t backgroundColor = focused
-        ? colorPixel(
-              connection_,
-              screen_->default_colormap,
-              0x2F2F,
-              0x6F6F,
-              0x4E4E,
-              screen_->black_pixel)
-        : colorPixel(
-              connection_,
-              screen_->default_colormap,
-              0x2A2A,
-              0x2A2A,
-              0x2A2A,
-              screen_->black_pixel);
-
-    const uint32_t buttonColor = focused
-        ? colorPixel(
-              connection_,
-              screen_->default_colormap,
-              0x2458,
-              0x5C5C,
-              0x4040,
-              backgroundColor)
-        : colorPixel(
-              connection_,
-              screen_->default_colormap,
-              0x3A3A,
-              0x3A3A,
-              0x3A3A,
-              backgroundColor);
-
-    const uint32_t closeColor = focused
-        ? colorPixel(
-              connection_,
-              screen_->default_colormap,
-              0xCCCC,
-              0x3333,
-              0x3333,
-              buttonColor)
-        : colorPixel(
-              connection_,
-              screen_->default_colormap,
-              0x6A6A,
-              0x3A3A,
-              0x3A3A,
-              buttonColor);
-
-    const uint32_t titleColor = focused
-        ? screen_->white_pixel
-        : colorPixel(
-              connection_,
-              screen_->default_colormap,
-              0x8C8C,
-              0x8C8C,
-              0x8C8C,
-              screen_->white_pixel);
-
     const xcb_gcontext_t gc = xcb_generate_id(connection_);
+    const uint32_t values[] = {0};
+    xcb_create_gc(connection_, gc, titleBar, XCB_GC_GRAPHICS_EXPOSURES, values);
 
-    const uint32_t values[] = {
-        XCB_GX_COPY,
-        backgroundColor,
-        2,
-        0
-    };
-
-    xcb_create_gc(
+    const auto positionCookie = xcb_translate_coordinates(
         connection_,
-        gc,
         titleBar,
-        XCB_GC_FUNCTION |
-            XCB_GC_FOREGROUND |
-            XCB_GC_LINE_WIDTH |
-            XCB_GC_GRAPHICS_EXPOSURES,
-        values
-    );
+        screen_->root,
+        0,
+        0);
+    xcb_translate_coordinates_reply_t* position =
+        xcb_translate_coordinates_reply(connection_, positionCookie, nullptr);
+    const int16_t rootX = position == nullptr ? 0 : position->dst_x;
+    const int16_t rootY = position == nullptr ? 0 : position->dst_y;
+    std::free(position);
 
-    const xcb_rectangle_t rectangle = {
-        0,
-        0,
+    std::vector<std::uint8_t> pixels;
+    const bool glass = fillTitleGlass(
+        screen_,
+        rootX,
+        rootY,
         geometry->width,
-        geometry->height
-    };
+        geometry->height,
+        focused,
+        pixels);
 
-    xcb_poly_fill_rectangle(
-        connection_,
-        titleBar,
-        gc,
-        1,
-        &rectangle
-    );
-
-    xcb_change_gc(
-        connection_,
-        gc,
-        XCB_GC_FOREGROUND,
-        &titleColor
-    );
+    if (!glass) {
+        fillSolidBar(geometry->width, geometry->height, focused, pixels);
+    }
 
     std::string title = "Eden Window";
 
@@ -721,38 +1025,30 @@ void WindowManager::drawTitleBar(xcb_window_t titleBar)
         title = managed->title;
     }
 
-    if (title.size() > 40) {
-        title.resize(40);
+    paintTitleChrome(
+        pixels,
+        geometry->width,
+        geometry->height,
+        title,
+        focused,
+        maximized,
+        glass);
+
+    if (screen_->root_depth >= 24 && !pixels.empty()) {
+        xcb_put_image(
+            connection_,
+            XCB_IMAGE_FORMAT_Z_PIXMAP,
+            titleBar,
+            gc,
+            geometry->width,
+            geometry->height,
+            0,
+            0,
+            0,
+            screen_->root_depth,
+            static_cast<std::uint32_t>(pixels.size()),
+            pixels.data());
     }
-
-    xcb_image_text_8(
-        connection_,
-        static_cast<uint8_t>(title.size()),
-        titleBar,
-        gc,
-        10,
-        21,
-        title.c_str()
-    );
-
-    const TitleBarButtons buttons = titleBarButtons(geometry->width);
-
-    xcb_change_gc(connection_, gc, XCB_GC_FOREGROUND, &buttonColor);
-    fillButton(connection_, titleBar, gc, buttons.minimize);
-    fillButton(connection_, titleBar, gc, buttons.maximize);
-
-    xcb_change_gc(connection_, gc, XCB_GC_FOREGROUND, &closeColor);
-    fillButton(connection_, titleBar, gc, buttons.close);
-
-    xcb_change_gc(connection_, gc, XCB_GC_FOREGROUND, &titleColor);
-    drawMinimizeGlyph(connection_, titleBar, gc, buttons.minimize);
-    drawMaximizeGlyph(
-        connection_,
-        titleBar,
-        gc,
-        buttons.maximize,
-        maximized);
-    drawCloseGlyph(connection_, titleBar, gc, buttons.close);
 
     xcb_free_gc(connection_, gc);
     std::free(geometry);
@@ -1043,6 +1339,12 @@ void WindowManager::layoutFrame(
 
     width = size.width;
     height = size.height;
+
+    const int16_t top = workArea().y;
+
+    if (y < top) {
+        y = top;
+    }
 
     const uint32_t frameValues[] = {
         packedCoordinate(x),

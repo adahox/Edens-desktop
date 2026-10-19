@@ -6,6 +6,8 @@
 #include <QWidget>
 #include "desktop/desktopwindow.hpp"
 #include "desktop/dockbar.hpp"
+#include "desktop/programsearch.hpp"
+#include "desktop/statusbar.hpp"
 #include <QPainter>
 #include <QColor>
 #include <QContextMenuEvent>
@@ -221,7 +223,11 @@ int main(int argc, char *argv[])
     }
 
     const QRect full = screen->geometry();
-    const QRect area = workAreaOr(full);
+    QRect area = workAreaOr(full);
+
+    if (area.top() < StatusBar::kBarHeight) {
+        area.setTop(StatusBar::kBarHeight);
+    }
 
     desktop.setAttribute(Qt::WA_NativeWindow);
     desktop.setGeometry(area);
@@ -235,6 +241,12 @@ int main(int argc, char *argv[])
     DockBar dock;
     dock.place(full);
     dock.show();
+
+    StatusBar statusBar;
+    statusBar.place(full);
+    statusBar.show();
+
+    ProgramSearch::install();
 
     return app.exec();
 }

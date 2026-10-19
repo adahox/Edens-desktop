@@ -28,6 +28,10 @@ qt_add_executable(eden-desktop
     desktop/src/desktop/desktopwindow.cpp
     desktop/src/desktop/dockbar.hpp
     desktop/src/desktop/dockbar.cpp
+    desktop/src/desktop/statusbar.hpp
+    desktop/src/desktop/statusbar.cpp
+    desktop/src/desktop/programsearch.hpp
+    desktop/src/desktop/programsearch.cpp
     desktop/src/filemanager/filemanagerwindow.hpp
     desktop/src/filemanager/filemanagerwindow.cpp
     desktop/src/windowmanager/windowmanager.hpp
@@ -48,6 +52,7 @@ target_link_libraries(eden-desktop
         PkgConfig::CAIRO
         PkgConfig::GLIB
         /usr/lib/x86_64-linux-gnu/librsvg-2.so.2
+        jpeg
 )
 
 # Eden File Manager: C / GTK 3
@@ -101,6 +106,8 @@ target_include_directories(windowmanager-test
 target_link_libraries(windowmanager-test
     PRIVATE
         PkgConfig::XCB
+        PkgConfig::CAIRO
+        jpeg
 )
 
 target_include_directories(windowmanager-policy-test

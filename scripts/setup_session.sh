@@ -18,7 +18,7 @@ trap 'rm -f "${startup}" "${session}"' EXIT
 cat > "${startup}" << EOF
 #!/bin/bash
 export EDEN_SESSION=1
-${WINDOW_MANAGER} &
+${WINDOW_MANAGER} >/tmp/eden-wm.log 2>&1 &
 sleep 0.4
 exec ${DESKTOP}
 EOF

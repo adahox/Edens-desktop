@@ -52,6 +52,7 @@ private:
 
         uint32_t desktop = 0;
         bool acceptsInput = true;
+        int ignoreUnmap = 0;
         std::string title;
     };
 
@@ -128,6 +129,7 @@ private:
     void handlePanelPress(int16_t x);
     void applyNetWmState(ManagedWindow& window, uint32_t action, xcb_atom_t atom);
     [[nodiscard]] MonitorRect workArea() const;
+    void revealManagedFrames();
     void sendConfigureNotify(
         const ManagedWindow& window,
         int16_t frameX,
@@ -137,6 +139,7 @@ private:
 
     xcb_connection_t* connection_ = nullptr;
     xcb_screen_t* screen_ = nullptr;
+    xcb_cursor_t pointerCursor_ = XCB_NONE;
     std::unordered_map<xcb_window_t, ManagedWindow> windows_;
     std::vector<xcb_window_t> focusOrder_;
     std::vector<xcb_window_t> panelClients_;
