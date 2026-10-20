@@ -42,6 +42,8 @@ qt_add_executable(eden-desktop
     desktop/src/desktop/monitorlayout.cpp
     desktop/src/desktop/docksettings.hpp
     desktop/src/desktop/docksettings.cpp
+    desktop/src/desktop/wallpapersettings.hpp
+    desktop/src/desktop/wallpapersettings.cpp
     desktop/src/desktop/screenshot.hpp
     desktop/src/desktop/screenshot.cpp
     desktop/src/desktop/programsearch.hpp

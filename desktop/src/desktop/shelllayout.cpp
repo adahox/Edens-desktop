@@ -65,6 +65,13 @@ void bind(DesktopWindow *desktop, DockBar *dock, StatusBar *status)
     gStatus = status;
 }
 
+void refreshWallpaper()
+{
+    if (gDesktop != nullptr) {
+        gDesktop->refreshWallpaper();
+    }
+}
+
 void relayout()
 {
     QScreen *primary = QGuiApplication::primaryScreen();

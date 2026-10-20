@@ -3,19 +3,25 @@
 #include "desktop/docksettings.hpp"
 #include "desktop/monitorlayout.hpp"
 #include "desktop/shelllayout.hpp"
+#include "desktop/wallpapersettings.hpp"
 
 #include <QApplication>
 #include <QComboBox>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
+#include <QListWidgetItem>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPixmap>
 #include <QProcess>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -206,6 +212,7 @@ void SettingsWindow::open()
 
     active_->refreshMonitors();
     active_->loadDockControls();
+    active_->loadWallpaperControls();
     active_->show();
     active_->raise();
     active_->activateWindow();
@@ -235,6 +242,7 @@ void SettingsWindow::buildUi()
     nav_->setFixedWidth(210);
     nav_->addItem(QStringLiteral("Monitores"));
     nav_->addItem(QStringLiteral("Dock"));
+    nav_->addItem(QStringLiteral("Papel de parede"));
     nav_->setCurrentRow(0);
     connect(nav_, &QListWidget::currentRowChanged, this, [this](int row) {
         setSection(row);
@@ -262,10 +270,12 @@ void SettingsWindow::buildUi()
     stack_ = new QStackedWidget(content);
     stack_->addWidget(buildMonitorsPage());
     stack_->addWidget(buildDockPage());
+    stack_->addWidget(buildWallpaperPage());
     contentLayout->addWidget(stack_, 1);
     root->addWidget(content, 1);
 
     loadDockControls();
+    loadWallpaperControls();
 }
 
 QWidget *SettingsWindow::buildMonitorsPage()
@@ -360,6 +370,9 @@ void SettingsWindow::setSection(int section)
     if (index == 1) {
         subtitle_->setText(QStringLiteral("Ajuste tamanho, fonte e espaçamento do Dock."));
         loadDockControls();
+    } else if (index == 2) {
+        subtitle_->setText(QStringLiteral("Escolha um papel de parede do Eden ou um arquivo seu."));
+        loadWallpaperControls();
     } else {
         subtitle_->setText(QStringLiteral("Configure o monitor principal e o secundário."));
     }
@@ -622,6 +635,237 @@ void SettingsWindow::applyDockSettings()
     if (dockStatusLabel_ != nullptr) {
         dockStatusLabel_->setText(QStringLiteral("Configuração do Dock salva."));
     }
+}
+
+QWidget *SettingsWindow::buildWallpaperPage()
+{
+    auto *page = new QWidget(stack_);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(14);
+
+    auto *card = new QFrame(page);
+    card->setStyleSheet(QStringLiteral(
+        "QFrame { background: #1C2230; border: 1px solid #3A455C; border-radius: 16px; }"));
+    auto *cardLayout = new QVBoxLayout(card);
+    cardLayout->setContentsMargins(18, 16, 18, 16);
+    cardLayout->setSpacing(14);
+
+    auto *heading = new QLabel(QStringLiteral("Papel de parede"), card);
+    QFont headingFont = heading->font();
+    headingFont.setPointSize(13);
+    headingFont.setWeight(QFont::DemiBold);
+    heading->setFont(headingFont);
+    cardLayout->addWidget(heading);
+
+    wallpaperPreview_ = new QLabel(card);
+    wallpaperPreview_->setMinimumHeight(180);
+    wallpaperPreview_->setAlignment(Qt::AlignCenter);
+    wallpaperPreview_->setStyleSheet(QStringLiteral(
+        "QLabel {"
+        "  background: #0E121A;"
+        "  border: 1px solid #3A455C;"
+        "  border-radius: 14px;"
+        "  color: #A8B0C2;"
+        "}"));
+    wallpaperPreview_->setScaledContents(false);
+    cardLayout->addWidget(wallpaperPreview_);
+
+    wallpaperPathLabel_ = new QLabel(card);
+    wallpaperPathLabel_->setStyleSheet(QStringLiteral("color: #A8B0C2; font-size: 12px;"));
+    wallpaperPathLabel_->setWordWrap(true);
+    cardLayout->addWidget(wallpaperPathLabel_);
+
+    auto *galleryLabel = new QLabel(QStringLiteral("Biblioteca do Eden"), card);
+    galleryLabel->setStyleSheet(QStringLiteral("color: #F2F4F8; font-weight: 600;"));
+    cardLayout->addWidget(galleryLabel);
+
+    wallpaperGallery_ = new QListWidget(card);
+    wallpaperGallery_->setViewMode(QListView::IconMode);
+    wallpaperGallery_->setIconSize(QSize(140, 84));
+    wallpaperGallery_->setResizeMode(QListWidget::Adjust);
+    wallpaperGallery_->setMovement(QListWidget::Static);
+    wallpaperGallery_->setSpacing(10);
+    wallpaperGallery_->setMinimumHeight(150);
+    wallpaperGallery_->setStyleSheet(QStringLiteral(
+        "QListWidget {"
+        "  background: #0E121A; border: 1px solid #3A455C; border-radius: 12px;"
+        "  padding: 10px;"
+        "}"
+        "QListWidget::item {"
+        "  background: #1C2230; border: 1px solid #3A455C; border-radius: 10px;"
+        "  padding: 6px; margin: 2px;"
+        "}"
+        "QListWidget::item:selected {"
+        "  background: rgba(0,122,255,0.22); border: 1px solid #007AFF;"
+        "}"));
+    cardLayout->addWidget(wallpaperGallery_, 1);
+
+    connect(wallpaperGallery_, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
+        if (item == nullptr) {
+            return;
+        }
+
+        selectWallpaperPath(item->data(Qt::UserRole).toString());
+    });
+
+    layout->addWidget(card, 1);
+
+    auto *actions = new QHBoxLayout;
+    wallpaperStatusLabel_ = new QLabel(page);
+    wallpaperStatusLabel_->setStyleSheet(QStringLiteral("color: #A8B0C2;"));
+    actions->addWidget(wallpaperStatusLabel_, 1);
+
+    wallpaperChooseButton_ = new QPushButton(QStringLiteral("Escolher arquivo…"), page);
+    wallpaperResetButton_ = new QPushButton(QStringLiteral("Padrão"), page);
+    wallpaperApplyButton_ = new QPushButton(QStringLiteral("Aplicar"), page);
+    wallpaperApplyButton_->setObjectName(QStringLiteral("applyButton"));
+    actions->addWidget(wallpaperChooseButton_);
+    actions->addWidget(wallpaperResetButton_);
+    actions->addWidget(wallpaperApplyButton_);
+    layout->addLayout(actions);
+
+    connect(wallpaperChooseButton_, &QPushButton::clicked, this, [this]() {
+        chooseWallpaperFile();
+    });
+    connect(wallpaperResetButton_, &QPushButton::clicked, this, [this]() {
+        resetWallpaperSettings();
+    });
+    connect(wallpaperApplyButton_, &QPushButton::clicked, this, [this]() {
+        applyWallpaperSettings();
+    });
+
+    return page;
+}
+
+void SettingsWindow::selectWallpaperPath(const QString &path)
+{
+    if (path.isEmpty() || !QFileInfo::exists(path)) {
+        return;
+    }
+
+    wallpaperPendingPath_ = QFileInfo(path).absoluteFilePath();
+
+    if (wallpaperPathLabel_ != nullptr) {
+        wallpaperPathLabel_->setText(wallpaperPendingPath_);
+    }
+
+    if (wallpaperPreview_ != nullptr) {
+        const QPixmap source(wallpaperPendingPath_);
+
+        if (source.isNull()) {
+            wallpaperPreview_->setText(QStringLiteral("Não foi possível carregar a imagem"));
+            wallpaperPreview_->setPixmap(QPixmap());
+        } else {
+            wallpaperPreview_->setText({});
+            const QSize target = wallpaperPreview_->size().isValid()
+                ? wallpaperPreview_->size().boundedTo(QSize(860, 220))
+                : QSize(640, 180);
+            wallpaperPreview_->setPixmap(source.scaled(
+                target.width() > 0 ? target : QSize(640, 180),
+                Qt::KeepAspectRatio,
+                Qt::SmoothTransformation));
+        }
+    }
+
+    if (wallpaperGallery_ != nullptr) {
+        const QSignalBlocker blocker(wallpaperGallery_);
+
+        for (int index = 0; index < wallpaperGallery_->count(); ++index) {
+            QListWidgetItem *item = wallpaperGallery_->item(index);
+
+            if (item != nullptr &&
+                item->data(Qt::UserRole).toString() == wallpaperPendingPath_) {
+                wallpaperGallery_->setCurrentItem(item);
+                break;
+            }
+        }
+    }
+
+    if (wallpaperStatusLabel_ != nullptr) {
+        wallpaperStatusLabel_->setText(QStringLiteral("Pré-visualização pronta. Clique em Aplicar."));
+    }
+}
+
+void SettingsWindow::loadWallpaperControls()
+{
+    if (wallpaperGallery_ == nullptr) {
+        return;
+    }
+
+    wallpaperGallery_->clear();
+    const QStringList bundled = EdenWallpaper::bundledPaths();
+
+    for (const QString &path : bundled) {
+        QPixmap thumb(path);
+
+        if (thumb.isNull()) {
+            continue;
+        }
+
+        auto *item = new QListWidgetItem(
+            QIcon(thumb.scaled(140, 84, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation)),
+            QFileInfo(path).completeBaseName(),
+            wallpaperGallery_);
+        item->setData(Qt::UserRole, path);
+        item->setSizeHint(QSize(156, 110));
+    }
+
+    selectWallpaperPath(EdenWallpaper::currentPath());
+
+    if (wallpaperStatusLabel_ != nullptr) {
+        wallpaperStatusLabel_->setText(QStringLiteral("Papel de parede atual carregado."));
+    }
+}
+
+void SettingsWindow::chooseWallpaperFile()
+{
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("Escolher papel de parede"),
+        QDir::homePath(),
+        QStringLiteral("Imagens (*.jpg *.jpeg *.png *.webp *.bmp)"));
+
+    if (path.isEmpty()) {
+        return;
+    }
+
+    selectWallpaperPath(path);
+}
+
+void SettingsWindow::applyWallpaperSettings()
+{
+    if (wallpaperPendingPath_.isEmpty()) {
+        wallpaperPendingPath_ = EdenWallpaper::currentPath();
+    }
+
+    if (!EdenWallpaper::apply(wallpaperPendingPath_)) {
+        QMessageBox::warning(
+            this,
+            QStringLiteral("Papel de parede"),
+            QStringLiteral("Não foi possível aplicar o papel de parede."));
+        return;
+    }
+
+    if (wallpaperStatusLabel_ != nullptr) {
+        wallpaperStatusLabel_->setText(QStringLiteral("Papel de parede aplicado."));
+    }
+}
+
+void SettingsWindow::resetWallpaperSettings()
+{
+    const QString path = EdenWallpaper::defaultPath();
+
+    if (path.isEmpty()) {
+        QMessageBox::warning(
+            this,
+            QStringLiteral("Papel de parede"),
+            QStringLiteral("Não encontrei o papel de parede padrão."));
+        return;
+    }
+
+    selectWallpaperPath(path);
+    applyWallpaperSettings();
 }
 
 QVector<SettingsWindow::MonitorInfo> SettingsWindow::queryMonitors() const

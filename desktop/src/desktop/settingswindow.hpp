@@ -45,9 +45,15 @@ private:
     void loadDockControls();
     void previewDockSettings();
     void applyDockSettings();
+    void loadWallpaperControls();
+    void selectWallpaperPath(const QString &path);
+    void chooseWallpaperFile();
+    void applyWallpaperSettings();
+    void resetWallpaperSettings();
     [[nodiscard]] QVector<MonitorInfo> queryMonitors() const;
     [[nodiscard]] QWidget *buildMonitorsPage();
     [[nodiscard]] QWidget *buildDockPage();
+    [[nodiscard]] QWidget *buildWallpaperPage();
 
     QListWidget *nav_ = nullptr;
     QStackedWidget *stack_ = nullptr;
@@ -75,6 +81,15 @@ private:
     QLabel *dockStatusLabel_ = nullptr;
     QPushButton *dockApplyButton_ = nullptr;
     QPushButton *dockResetButton_ = nullptr;
+
+    QLabel *wallpaperPreview_ = nullptr;
+    QLabel *wallpaperPathLabel_ = nullptr;
+    QLabel *wallpaperStatusLabel_ = nullptr;
+    QListWidget *wallpaperGallery_ = nullptr;
+    QPushButton *wallpaperChooseButton_ = nullptr;
+    QPushButton *wallpaperApplyButton_ = nullptr;
+    QPushButton *wallpaperResetButton_ = nullptr;
+    QString wallpaperPendingPath_;
 
     static SettingsWindow *active_;
 

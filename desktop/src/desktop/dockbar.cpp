@@ -4,6 +4,7 @@
 #include "desktop/docksettings.hpp"
 #include "desktop/settingswindow.hpp"
 #include "desktop/systemmanager.hpp"
+#include "desktop/wallpapersettings.hpp"
 
 #include <QApplication>
 #include <QDateTime>
@@ -113,22 +114,7 @@ QString iconFile(const QString &name)
 
 QString wallpaperFile()
 {
-    const QDir binaryDirectory(QCoreApplication::applicationDirPath());
-    const QString candidates[] = {
-        binaryDirectory.filePath(QStringLiteral("../assets/wallpapers/default.jpg")),
-        binaryDirectory.filePath(QStringLiteral("assets/wallpapers/default.jpg")),
-        QStringLiteral("assets/wallpapers/default.jpg")
-    };
-
-    for (const QString &candidate : candidates) {
-        const QString cleaned = QDir::cleanPath(candidate);
-
-        if (QFileInfo::exists(cleaned)) {
-            return cleaned;
-        }
-    }
-
-    return {};
+    return EdenWallpaper::currentPath();
 }
 
 void makeOpaque(QImage &image)

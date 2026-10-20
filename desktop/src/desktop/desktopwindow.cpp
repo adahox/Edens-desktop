@@ -2,6 +2,7 @@
 #include "desktopwindow.hpp"
 #include "desktop/desktoplaunch.hpp"
 #include "desktop/dockbar.hpp"
+#include "desktop/wallpapersettings.hpp"
 
 #include <QAction>
 #include <QColor>
@@ -11,8 +12,12 @@
 #include <QStandardItem>
 #include <QListView>
 #include <QMenu>
+#include <QMimeDatabase>
+#include <QMimeType>
 #include <QPainter>
+#include <QPainterPath>
 #include <QProcess>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QDir>
 #include <QMoveEvent>
@@ -20,11 +25,14 @@
 #include <QPixmap>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QFile>
 #include <QFileInfo>
 #include <QFileIconProvider>
 #include <QCloseEvent>
 #include <QCursor>
+#include <QDateTime>
 #include <QShowEvent>
+#include <QTextStream>
 #include <QTimer>
 #include <QApplication>
 #include <QGuiApplication>
@@ -32,13 +40,22 @@
 #include <QStyle>
 #include <QStyledItemDelegate>
 #include <QElapsedTimer>
+#include <QEvent>
 #include <QImage>
+#include <QMouseEvent>
 #include <QRadialGradient>
+#include <QHash>
+#include <QSet>
 #include <algorithm>
 #include <cmath>
 #include "filemanager/filemanagerwindow.hpp"
 
 namespace {
+
+constexpr int kDesktopIconSize = 64;
+constexpr int kDesktopGridW = 112;
+constexpr int kDesktopGridH = 108;
+constexpr int kDesktopPad = 16;
 
 class DesktopIconProvider final : public QFileIconProvider
 {
@@ -46,8 +63,31 @@ public:
     DesktopIconProvider()
     {
         const QStyle *style = QApplication::style();
-        directoryIcon_ = style->standardIcon(QStyle::SP_DirIcon);
-        fileIcon_ = style->standardIcon(QStyle::SP_FileIcon);
+        directoryIcon_ = QIcon::fromTheme(
+            QStringLiteral("folder"),
+            style->standardIcon(QStyle::SP_DirIcon));
+        fileIcon_ = QIcon::fromTheme(
+            QStringLiteral("text-x-generic"),
+            style->standardIcon(QStyle::SP_FileIcon));
+    }
+
+    [[nodiscard]] bool isImage(const QFileInfo &info) const
+    {
+        if (!info.isFile()) {
+            return false;
+        }
+
+        const QMimeType mime = mimeDb_.mimeTypeForFile(info);
+        if (mime.name().startsWith(QLatin1String("image/"))) {
+            return true;
+        }
+
+        static const QSet<QString> suffixes = {
+            QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
+            QStringLiteral("webp"), QStringLiteral("bmp"), QStringLiteral("gif"),
+            QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("svg"),
+        };
+        return suffixes.contains(info.suffix().toLower());
     }
 
     QIcon icon(const QFileInfo &info) const override
@@ -65,12 +105,72 @@ public:
             }
         }
 
+        if (isImage(info)) {
+            const QString cacheKey = info.absoluteFilePath()
+                + QLatin1Char('|')
+                + QString::number(info.lastModified().toSecsSinceEpoch());
+
+            if (thumbnailCache_.contains(cacheKey)) {
+                return thumbnailCache_.value(cacheKey);
+            }
+
+            QPixmap pixmap(info.absoluteFilePath());
+
+            if (!pixmap.isNull()) {
+                const QPixmap thumb = pixmap.scaled(
+                    kDesktopIconSize,
+                    kDesktopIconSize,
+                    Qt::KeepAspectRatio,
+                    Qt::SmoothTransformation);
+                const QIcon thumbIcon(thumb);
+                thumbnailCache_.insert(cacheKey, thumbIcon);
+                return thumbIcon;
+            }
+        }
+
+        const QMimeType mime = mimeDb_.mimeTypeForFile(info);
+        const QStringList themeNames = {
+            mime.iconName(),
+            mime.genericIconName(),
+        };
+
+        for (const QString &name : themeNames) {
+            if (name.isEmpty()) {
+                continue;
+            }
+
+            const QIcon themed = QIcon::fromTheme(name);
+
+            if (!themed.isNull()) {
+                return themed;
+            }
+        }
+
+        const QIcon systemIcon = QFileIconProvider::icon(info);
+
+        if (!systemIcon.isNull()) {
+            return systemIcon;
+        }
+
         return fileIcon_;
     }
 
 private:
     QIcon directoryIcon_;
     QIcon fileIcon_;
+    mutable QMimeDatabase mimeDb_;
+    mutable QHash<QString, QIcon> thumbnailCache_;
+};
+
+class DesktopListView final : public QListView
+{
+public:
+    using QListView::QListView;
+
+    void placeItem(const QPoint &position, const QModelIndex &index)
+    {
+        setPositionForIndex(position, index);
+    }
 };
 
 class DesktopItemDelegate final : public QStyledItemDelegate
@@ -84,12 +184,20 @@ public:
         const QModelIndex &index) const override
     {
         painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        painter->setRenderHint(QPainter::SmoothPixmapTransform);
 
         QStyleOptionViewItem itemOption = option;
         initStyleOption(&itemOption, index);
 
         if ((itemOption.state & QStyle::State_Selected) != 0) {
-            painter->fillRect(itemOption.rect, QColor(20, 20, 20, 90));
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(20, 20, 20, 100));
+            painter->drawRoundedRect(itemOption.rect.adjusted(2, 2, -2, -2), 10, 10);
+        } else if ((itemOption.state & QStyle::State_MouseOver) != 0) {
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(255, 255, 255, 28));
+            painter->drawRoundedRect(itemOption.rect.adjusted(2, 2, -2, -2), 10, 10);
         }
 
         const QSize iconSize = itemOption.decorationSize;
@@ -98,7 +206,33 @@ public:
             itemOption.rect.y() + 6,
             iconSize.width(),
             iconSize.height());
-        itemOption.icon.paint(painter, iconRect);
+
+        const bool isImage = index.data(Qt::UserRole + 1).toBool();
+        const QPixmap pixmap = itemOption.icon.pixmap(iconSize);
+
+        if (isImage && !pixmap.isNull()) {
+            const QPixmap fitted = pixmap.scaled(
+                iconSize,
+                Qt::KeepAspectRatio,
+                Qt::SmoothTransformation);
+            const QRect drawRect(
+                iconRect.x() + (iconRect.width() - fitted.width()) / 2,
+                iconRect.y() + (iconRect.height() - fitted.height()) / 2,
+                fitted.width(),
+                fitted.height());
+
+            QPainterPath clip;
+            clip.addRoundedRect(QRectF(drawRect).adjusted(0.5, 0.5, -0.5, -0.5), 8, 8);
+            painter->save();
+            painter->setClipPath(clip);
+            painter->drawPixmap(drawRect, fitted);
+            painter->restore();
+            painter->setPen(QPen(QColor(255, 255, 255, 55), 1));
+            painter->setBrush(Qt::NoBrush);
+            painter->drawRoundedRect(drawRect.adjusted(0, 0, -1, -1), 8, 8);
+        } else {
+            itemOption.icon.paint(painter, iconRect);
+        }
 
         const QRect textRect(
             itemOption.rect.x() + 4,
@@ -338,18 +472,20 @@ void DesktopWindow::setupFileArea()
     iconProvider_ = new DesktopIconProvider();
     fileModel_ = new QStandardItemModel(this);
 
-    fileView_ = new QListView(this);
+    auto *desktopView = new DesktopListView(this);
+    fileView_ = desktopView;
     fileView_->setItemDelegate(new DesktopItemDelegate(fileView_));
 
     fileView_->setModel(fileModel_);
     fileView_->setViewMode(QListView::IconMode);
     fileView_->setFlow(QListView::LeftToRight);
-    fileView_->setMovement(QListView::Snap);
-    fileView_->setResizeMode(QListView::Adjust);
+    fileView_->setMovement(QListView::Free);
+    fileView_->setResizeMode(QListView::Fixed);
     fileView_->setWrapping(true);
+    fileView_->setUniformItemSizes(false);
 
-    fileView_->setIconSize(QSize(48, 48));
-    fileView_->setGridSize(QSize(104, 92));
+    fileView_->setIconSize(QSize(kDesktopIconSize, kDesktopIconSize));
+    fileView_->setGridSize(QSize(kDesktopGridW, kDesktopGridH));
     fileView_->setSpacing(8);
 
     fileView_->setWordWrap(true);
@@ -410,6 +546,23 @@ void DesktopWindow::setupFileArea()
         }
     );
 
+    connect(
+        fileView_,
+        &QListView::indexesMoved,
+        this,
+        [this](const QModelIndexList &) {
+            if (!restoringLayout_) {
+                scheduleSaveDesktopLayout();
+            }
+        });
+
+    layoutSaveTimer_ = new QTimer(this);
+    layoutSaveTimer_->setSingleShot(true);
+    layoutSaveTimer_->setInterval(250);
+    connect(layoutSaveTimer_, &QTimer::timeout, this, [this]() {
+        saveDesktopLayout();
+    });
+
     directoryWatcher_ = new QFileSystemWatcher(this);
     directoryWatcher_->addPath(desktopDirectory_);
     connect(
@@ -423,8 +576,122 @@ void DesktopWindow::setupFileArea()
 
     revealDesktopFiles();
 
+    fileView_->viewport()->installEventFilter(this);
     fileView_->setGeometry(rect());
     applyWallpaper();
+}
+
+QString DesktopWindow::layoutConfigPath() const
+{
+    const QString dir = QDir::home().filePath(QStringLiteral(".config/eden"));
+    QDir().mkpath(dir);
+    return QDir(dir).filePath(QStringLiteral("desktop-layout.conf"));
+}
+
+QHash<QString, QPoint> DesktopWindow::loadDesktopLayout() const
+{
+    QHash<QString, QPoint> positions;
+    QFile file(layoutConfigPath());
+
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return positions;
+    }
+
+    while (!file.atEnd()) {
+        const QString line = QString::fromUtf8(file.readLine()).trimmed();
+
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
+            continue;
+        }
+
+        const int split = line.indexOf(QLatin1Char('='));
+
+        if (split <= 0) {
+            continue;
+        }
+
+        const QString key = line.left(split).trimmed();
+        const QString value = line.mid(split + 1).trimmed();
+        const QStringList parts = value.split(QLatin1Char(','));
+
+        if (parts.size() != 2) {
+            continue;
+        }
+
+        bool okX = false;
+        bool okY = false;
+        const int x = parts.at(0).toInt(&okX);
+        const int y = parts.at(1).toInt(&okY);
+
+        if (okX && okY) {
+            positions.insert(key, QPoint(x, y));
+        }
+    }
+
+    return positions;
+}
+
+void DesktopWindow::scheduleSaveDesktopLayout()
+{
+    if (layoutSaveTimer_ != nullptr) {
+        layoutSaveTimer_->start();
+    }
+}
+
+void DesktopWindow::saveDesktopLayout()
+{
+    if (fileModel_ == nullptr || fileView_ == nullptr || restoringLayout_) {
+        return;
+    }
+
+    QSaveFile file(layoutConfigPath());
+
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return;
+    }
+
+    QTextStream stream(&file);
+    stream << "# Eden desktop icon positions\n";
+
+    for (int row = 0; row < fileModel_->rowCount(); ++row) {
+        const QModelIndex index = fileModel_->index(row, 0);
+        const QString path = index.data(RolePath).toString();
+
+        if (path.isEmpty()) {
+            continue;
+        }
+
+        const QPoint topLeft = fileView_->visualRect(index).topLeft();
+        stream << QFileInfo(path).fileName() << '=' << topLeft.x() << ','
+               << topLeft.y() << '\n';
+    }
+
+    file.commit();
+}
+
+QPoint DesktopWindow::nextFreeIconPosition(const QHash<QString, QPoint> &used) const
+{
+    QSet<QPoint> occupied;
+
+    for (auto it = used.cbegin(); it != used.cend(); ++it) {
+        occupied.insert(it.value());
+    }
+
+    const int viewportW = fileView_ != nullptr
+        ? std::max(kDesktopGridW * 2, fileView_->viewport()->width() - kDesktopPad)
+        : 800;
+
+    for (int y = kDesktopPad; y < 4000; y += kDesktopGridH) {
+        for (int x = kDesktopPad; x + kDesktopGridW <= viewportW; x += kDesktopGridW) {
+            const QPoint candidate(x, y);
+
+            if (!occupied.contains(candidate)) {
+                return candidate;
+            }
+        }
+    }
+
+    return QPoint(kDesktopPad, kDesktopPad);
 }
 
 void DesktopWindow::revealDesktopFiles()
@@ -433,11 +700,19 @@ void DesktopWindow::revealDesktopFiles()
         return;
     }
 
+    saveDesktopLayout();
+
+    const QHash<QString, QPoint> saved = loadDesktopLayout();
+    QHash<QString, QPoint> placed;
+
+    restoringLayout_ = true;
     fileModel_->clear();
 
     const QFileInfoList entries = QDir(desktopDirectory_).entryInfoList(
         QDir::AllDirs | QDir::Files | QDir::NoDotAndDotDot | QDir::Readable,
         QDir::DirsFirst | QDir::IgnoreCase | QDir::Name);
+
+    auto *typedProvider = static_cast<DesktopIconProvider *>(iconProvider_);
 
     for (const QFileInfo &info : entries) {
         QString label = info.fileName();
@@ -455,11 +730,25 @@ void DesktopWindow::revealDesktopFiles()
         }
 
         auto *item = new QStandardItem(iconProvider_->icon(info), label);
-        item->setData(info.absoluteFilePath(), Qt::UserRole);
+        item->setData(info.absoluteFilePath(), RolePath);
+        item->setData(typedProvider->isImage(info), RoleIsImage);
         item->setEditable(false);
+        item->setSizeHint(QSize(kDesktopGridW - 8, kDesktopGridH - 8));
         fileModel_->appendRow(item);
+
+        const QModelIndex index = item->index();
+        QPoint position = saved.value(info.fileName());
+
+        if (!saved.contains(info.fileName())) {
+            position = nextFreeIconPosition(placed);
+        }
+
+        placed.insert(info.fileName(), position);
+
+        static_cast<DesktopListView *>(fileView_)->placeItem(position, index);
     }
 
+    restoringLayout_ = false;
     fileView_->viewport()->update();
 }
 
@@ -472,22 +761,7 @@ void DesktopWindow::showEvent(QShowEvent *event)
 
 QString DesktopWindow::wallpaperPath() const
 {
-    const QDir binaryDirectory(QCoreApplication::applicationDirPath());
-    const QString candidates[] = {
-        binaryDirectory.filePath("../assets/wallpapers/default.jpg"),
-        binaryDirectory.filePath("assets/wallpapers/default.jpg"),
-        QStringLiteral("assets/wallpapers/default.jpg")
-    };
-
-    for (const QString &candidate : candidates) {
-        const QString cleaned = QDir::cleanPath(candidate);
-
-        if (QFileInfo::exists(cleaned)) {
-            return cleaned;
-        }
-    }
-
-    return QString();
+    return EdenWallpaper::currentPath();
 }
 
 void DesktopWindow::applyWallpaper()
@@ -549,7 +823,7 @@ void DesktopWindow::applyWallpaper()
 
 void DesktopWindow::openItem(const QModelIndex &index)
 {
-    const QString path = index.data(Qt::UserRole).toString();
+    const QString path = index.data(RolePath).toString();
     const QFileInfo info(path);
 
     if (info.isDir()) {
@@ -659,8 +933,23 @@ void DesktopWindow::allowSessionExit()
     sessionExitAllowed_ = true;
 }
 
+bool DesktopWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (fileView_ != nullptr &&
+        watched == fileView_->viewport() &&
+        event != nullptr &&
+        event->type() == QEvent::MouseButtonRelease &&
+        !restoringLayout_) {
+        scheduleSaveDesktopLayout();
+    }
+
+    return QWidget::eventFilter(watched, event);
+}
+
 void DesktopWindow::closeEvent(QCloseEvent *event)
 {
+    saveDesktopLayout();
+
     if (sessionExitAllowed_) {
         event->accept();
         return;
