@@ -15,6 +15,8 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb)
+pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
+pkg_check_modules(XRANDR REQUIRED IMPORTED_TARGET xrandr)
 pkg_check_modules(CAIRO REQUIRED IMPORTED_TARGET cairo)
 pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0)
 pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
@@ -32,6 +34,8 @@ qt_add_executable(eden-desktop
     desktop/src/desktop/statusbar.cpp
     desktop/src/desktop/programsearch.hpp
     desktop/src/desktop/programsearch.cpp
+    desktop/src/desktop/systemmanager.hpp
+    desktop/src/desktop/systemmanager.cpp
     desktop/src/filemanager/filemanagerwindow.hpp
     desktop/src/filemanager/filemanagerwindow.cpp
     desktop/src/windowmanager/windowmanager.hpp
@@ -49,6 +53,8 @@ target_link_libraries(eden-desktop
     PRIVATE
         Qt6::Widgets
         PkgConfig::XCB
+        PkgConfig::X11
+        PkgConfig::XRANDR
         PkgConfig::CAIRO
         PkgConfig::GLIB
         /usr/lib/x86_64-linux-gnu/librsvg-2.so.2
@@ -106,6 +112,8 @@ target_include_directories(windowmanager-test
 target_link_libraries(windowmanager-test
     PRIVATE
         PkgConfig::XCB
+        PkgConfig::X11
+        PkgConfig::XRANDR
         PkgConfig::CAIRO
         jpeg
 )
