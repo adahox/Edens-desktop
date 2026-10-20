@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Instalador Eden
+Comment=Instala pacotes .deb com arrastar e soltar
+Exec=eden-installer %f
+Icon=system-software-install
+Terminal=false
+Categories=System;PackageManager;
+MimeType=application/vnd.debian.binary-package;
+NoDisplay=false

@@ -2,9 +2,16 @@
 #include "titlebarlayout.hpp"
 
 #include <cstdlib>
+#include <cmath>
 #include <iostream>
 #include <string>
 #include <unistd.h>
+
+namespace {
+
+constexpr xcb_timestamp_t kDoubleClickMs = 400;
+
+}  // namespace
 
 void WindowManager::processMessages(xcb_generic_event_t* event)
 {
@@ -30,6 +37,15 @@ void WindowManager::processMessages(xcb_generic_event_t* event)
     case XCB_MOTION_NOTIFY:
         processPointerMotion(event);
         break;
+    case XCB_LEAVE_NOTIFY: {
+        const auto* leave = reinterpret_cast<xcb_leave_notify_event_t*>(event);
+
+        if (findByTitleBar(leave->event) != nullptr) {
+            processTitleBarLeave(leave->event);
+        }
+
+        break;
+    }
     case XCB_MAP_REQUEST:
         processMapRequest(event);
         break;
@@ -308,16 +324,39 @@ void WindowManager::processTitleBarPress(
 
     switch (clicked) {
     case TitleButton::Minimize:
+        clearTitleBarHover();
         minimizeWindow(window);
         return;
     case TitleButton::Maximize:
+        clearTitleBarHover();
         toggleMaximize(window);
         return;
     case TitleButton::Close:
+        clearTitleBarHover();
         closeWindow(window);
         return;
     case TitleButton::None:
         break;
+    }
+
+    const bool isDoubleClick =
+        window.titleBar == lastTitleClickBar_ &&
+        lastTitleClickTime_ != 0 &&
+        button->time >= lastTitleClickTime_ &&
+        (button->time - lastTitleClickTime_) <= kDoubleClickMs &&
+        std::abs(button->event_x - lastTitleClickX_) <= 6 &&
+        std::abs(button->event_y - lastTitleClickY_) <= 6;
+
+    lastTitleClickBar_ = window.titleBar;
+    lastTitleClickTime_ = button->time;
+    lastTitleClickX_ = button->event_x;
+    lastTitleClickY_ = button->event_y;
+
+    if (isDoubleClick) {
+        lastTitleClickTime_ = 0;
+        clearTitleBarHover();
+        toggleMaximize(window);
+        return;
     }
 
     const auto frameCookie = xcb_get_geometry(connection_, window.frame);
@@ -353,6 +392,56 @@ void WindowManager::processTitleBarPress(
     xcb_flush(connection_);
 }
 
+void WindowManager::clearTitleBarHover()
+{
+    if (hoveredTitleBar_ == XCB_WINDOW_NONE) {
+        return;
+    }
+
+    const xcb_window_t titleBar = hoveredTitleBar_;
+    hoveredTitleBar_ = XCB_WINDOW_NONE;
+    hoveredButton_ = TitleButton::None;
+    drawTitleBar(titleBar);
+}
+
+void WindowManager::processTitleBarLeave(xcb_window_t titleBar)
+{
+    if (hoveredTitleBar_ == titleBar) {
+        clearTitleBarHover();
+    }
+}
+
+void WindowManager::processTitleBarMotion(const xcb_motion_notify_event_t* motion)
+{
+    ManagedWindow* window = findByTitleBar(motion->event);
+
+    if (window == nullptr) {
+        return;
+    }
+
+    const auto barCookie = xcb_get_geometry(connection_, window->titleBar);
+    xcb_get_geometry_reply_t* barGeometry =
+        xcb_get_geometry_reply(connection_, barCookie, nullptr);
+
+    if (barGeometry == nullptr) {
+        return;
+    }
+
+    const TitleButton hovered = titleButtonAt(
+        barGeometry->width,
+        motion->event_x,
+        motion->event_y);
+    std::free(barGeometry);
+
+    if (hoveredTitleBar_ == window->titleBar && hoveredButton_ == hovered) {
+        return;
+    }
+
+    hoveredTitleBar_ = window->titleBar;
+    hoveredButton_ = hovered;
+    drawTitleBar(window->titleBar);
+}
+
 void WindowManager::processPointerMotion(xcb_generic_event_t* event)
 {
     const auto* motion = reinterpret_cast<xcb_motion_notify_event_t*>(event);
@@ -363,6 +452,10 @@ void WindowManager::processPointerMotion(xcb_generic_event_t* event)
     }
 
     if (draggingFrame_ == XCB_WINDOW_NONE) {
+        if (findByTitleBar(motion->event) != nullptr) {
+            processTitleBarMotion(motion);
+        }
+
         return;
     }
 

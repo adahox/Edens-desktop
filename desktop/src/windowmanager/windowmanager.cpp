@@ -413,6 +413,28 @@ void strokeIcon(cairo_t* context, double red, double green, double blue)
     cairo_stroke(context);
 }
 
+void paintHoverBackground(
+    cairo_t* context,
+    const TitleButtonLayout& button,
+    bool glass)
+{
+    roundedRect(
+        context,
+        button.x + 0.5,
+        button.y + 0.5,
+        kButtonSize - 1.0,
+        kButtonSize - 1.0,
+        5.0);
+
+    if (glass) {
+        cairo_set_source_rgb(context, 0.78, 0.80, 0.84);
+    } else {
+        cairo_set_source_rgb(context, 0.30, 0.34, 0.44);
+    }
+
+    cairo_fill(context);
+}
+
 void paintTitleChrome(
     std::vector<std::uint8_t>& pixels,
     uint16_t width,
@@ -420,7 +442,8 @@ void paintTitleChrome(
     const std::string& title,
     bool focused,
     bool maximized,
-    bool glass)
+    bool glass,
+    TitleButton hovered)
 {
     if (width == 0 || height == 0 || pixels.size() < static_cast<std::size_t>(width) * height * 4) {
         return;
@@ -475,6 +498,14 @@ void paintTitleChrome(
         };
     };
 
+    if (hovered == TitleButton::Minimize) {
+        paintHoverBackground(context, buttons.minimize, glass);
+    }
+
+    if (hovered == TitleButton::Maximize) {
+        paintHoverBackground(context, buttons.maximize, glass);
+    }
+
     const auto [minimizeX, minimizeY] = center(buttons.minimize);
     cairo_move_to(context, minimizeX - 5.0, minimizeY);
     cairo_line_to(context, minimizeX + 5.0, minimizeY);
@@ -494,10 +525,13 @@ void paintTitleChrome(
         cairo_stroke(context);
     }
 
+    const double closeFill = hovered == TitleButton::Close ? 0.945 : 0.820;
+    const double closeGreen = hovered == TitleButton::Close ? 0.290 : 0.416;
+    const double closeBlue = hovered == TitleButton::Close ? 0.290 : 0.416;
     const double closeX = buttons.close.x + 1.0;
     const double closeY = buttons.close.y + 1.0;
     roundedRect(context, closeX, closeY, 16, 16, 4);
-    cairo_set_source_rgb(context, 0.820, 0.416, 0.416);
+    cairo_set_source_rgb(context, closeFill, closeGreen, closeBlue);
     cairo_fill(context);
 
     const double closeCenterX = buttons.close.x + kButtonSize / 2.0;
@@ -899,7 +933,9 @@ bool WindowManager::manageWindow(xcb_window_t client)
         XCB_EVENT_MASK_EXPOSURE |
             XCB_EVENT_MASK_BUTTON_PRESS |
             XCB_EVENT_MASK_BUTTON_RELEASE |
-            XCB_EVENT_MASK_POINTER_MOTION,
+            XCB_EVENT_MASK_POINTER_MOTION |
+            XCB_EVENT_MASK_ENTER_WINDOW |
+            XCB_EVENT_MASK_LEAVE_WINDOW,
         pointerCursor_
     };
 
@@ -1001,6 +1037,16 @@ void WindowManager::unmanageWindow(xcb_window_t client)
 
     const xcb_window_t frame = iterator->second.frame;
 
+    if (hoveredTitleBar_ == iterator->second.titleBar) {
+        hoveredTitleBar_ = XCB_WINDOW_NONE;
+        hoveredButton_ = TitleButton::None;
+    }
+
+    if (lastTitleClickBar_ == iterator->second.titleBar) {
+        lastTitleClickBar_ = XCB_WINDOW_NONE;
+        lastTitleClickTime_ = 0;
+    }
+
     if (draggingFrame_ == frame || resizingFrame_ == frame) {
         draggingFrame_ = XCB_WINDOW_NONE;
         resizingFrame_ = XCB_WINDOW_NONE;
@@ -1092,6 +1138,9 @@ void WindowManager::drawTitleBar(xcb_window_t titleBar)
         title = managed->title;
     }
 
+    const TitleButton hovered =
+        titleBar == hoveredTitleBar_ ? hoveredButton_ : TitleButton::None;
+
     paintTitleChrome(
         pixels,
         geometry->width,
@@ -1099,7 +1148,8 @@ void WindowManager::drawTitleBar(xcb_window_t titleBar)
         title,
         focused,
         maximized,
-        glass);
+        glass,
+        hovered);
 
     if (screen_->root_depth >= 24 && !pixels.empty()) {
         xcb_put_image(

@@ -68,7 +68,10 @@ private:
         ManagedWindow& window,
         const xcb_button_press_event_t* button);
     void processPointerMotion(xcb_generic_event_t* event);
+    void processTitleBarMotion(const xcb_motion_notify_event_t* motion);
+    void processTitleBarLeave(xcb_window_t titleBar);
     void processButtonRelease();
+    void clearTitleBarHover();
     void processUnmapNotify(xcb_generic_event_t* event);
     void processMapRequest(xcb_generic_event_t* event);
     void processMapNotify(xcb_generic_event_t* event);
@@ -151,6 +154,12 @@ private:
     xcb_window_t panel_ = XCB_WINDOW_NONE;
     std::unordered_set<xcb_window_t> desktopWindows_;
     xcb_window_t supportingWindow_ = XCB_WINDOW_NONE;
+    xcb_window_t hoveredTitleBar_ = XCB_WINDOW_NONE;
+    TitleButton hoveredButton_ = TitleButton::None;
+    xcb_window_t lastTitleClickBar_ = XCB_WINDOW_NONE;
+    xcb_timestamp_t lastTitleClickTime_ = 0;
+    int16_t lastTitleClickX_ = 0;
+    int16_t lastTitleClickY_ = 0;
 
     int16_t dragStartX_ = 0;
     int16_t dragStartY_ = 0;

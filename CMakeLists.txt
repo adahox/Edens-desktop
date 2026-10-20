@@ -61,6 +61,23 @@ target_link_libraries(eden-desktop
         jpeg
 )
 
+# Eden .deb installer (Apple-style drag to install)
+qt_add_executable(eden-installer
+    desktop/src/installer/main.cpp
+    desktop/src/installer/debinstaller.hpp
+    desktop/src/installer/debinstaller.cpp
+)
+
+target_include_directories(eden-installer
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/desktop/src
+)
+
+target_link_libraries(eden-installer
+    PRIVATE
+        Qt6::Widgets
+)
+
 # Eden File Manager: C / GTK 3
 add_executable(edens
     filemanager/src/main.c

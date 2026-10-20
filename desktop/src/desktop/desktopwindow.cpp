@@ -541,6 +541,24 @@ void DesktopWindow::openItem(const QModelIndex &index)
         return;
     }
 
+    if (info.suffix().compare(QLatin1String("deb"), Qt::CaseInsensitive) == 0) {
+        const QString installer = QDir(
+            QCoreApplication::applicationDirPath()
+        ).filePath(QStringLiteral("eden-installer"));
+
+        if (QProcess::startDetached(installer, {info.absoluteFilePath()})) {
+            return;
+        }
+
+        const QString fallback =
+            QStandardPaths::findExecutable(QStringLiteral("eden-installer"));
+
+        if (!fallback.isEmpty() &&
+            QProcess::startDetached(fallback, {info.absoluteFilePath()})) {
+            return;
+        }
+    }
+
     QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
