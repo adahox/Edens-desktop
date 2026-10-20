@@ -3,6 +3,7 @@
 #include "core/widget/events.h"
 #include "ui/file_item/fileitem.h"
 #include "ui/file_area/filearea.h"
+#include "ui/navigation/navigation.h"
 
 enum {
     FILE_ICON_SIZE = EDENS_FILE_ICON_SIZE,
@@ -24,7 +25,7 @@ static gboolean file_item_navigate_idle(gpointer user_data)
 {
     FileItemNavigateRequest *request = user_data;
 
-    file_area_load_directory(request->file_area, request->path);
+    edens_navigation_go(request->file_area, request->path);
     g_free(request->path);
     g_free(request);
 
@@ -73,7 +74,10 @@ static void configure_item_label(GtkWidget *label, int max_width_px)
     gtk_label_set_max_width_chars(GTK_LABEL(label), max_chars);
 }
 
-static gboolean file_item_pointer_crossing(const GtkWidget *widget, const GdkEventCrossing *event, gpointer user_data)
+static gboolean file_item_pointer_crossing(
+    GtkWidget *widget,
+    const GdkEventCrossing *event,
+    gpointer user_data)
 {
     (void)event;
     gboolean entering = GPOINTER_TO_INT(user_data) != 0;

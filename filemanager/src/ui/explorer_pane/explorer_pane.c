@@ -2,7 +2,7 @@
 #include "core/widgetFactory.h"
 #include "ui/explorer_pane/explorer_pane.h"
 
-enum { EXPLORER_PANE_SIDEBAR_WIDTH = 220 };
+enum { EXPLORER_PANE_SIDEBAR_WIDTH = 248 };
 
 GtkWidget *build_explorer_pane(GtkWidget *sidebar, GtkWidget *content)
 {

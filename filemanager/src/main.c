@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <stddef.h>
 #include <stdlib.h>
-#include "processors/directories.h"
 
 #include "ui/window/window.h"
 #include "ui/main_box/mainbox.h"
@@ -15,7 +14,7 @@
 #include "ui/explorer_pane/explorer_pane.h"
 #include "ui/app_icon/app_icon.h"
 #include "ui/theme/theme.h"
-
+#include "ui/navigation/navigation.h"
 
 static void activate(GtkApplication *app, gpointer user_data)
 {
@@ -45,21 +44,30 @@ static void activate(GtkApplication *app, gpointer user_data)
     file_area_bind_scrolled(file_surface, scrolled_window);
 
     GtkWidget *content = build_content(scrolled_window);
-    GtkWidget *paned = build_explorer_pane(sidebar, content);
 
-    gtk_box_pack_start(GTK_BOX(root), toolbar, FALSE, FALSE, 0);
+    GtkWidget *stage = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_name(stage, "stage");
+    gtk_box_pack_start(GTK_BOX(stage), toolbar, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(stage), content, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(stage), action_bar, FALSE, FALSE, 0);
+
+    GtkWidget *paned = build_explorer_pane(sidebar, stage);
     gtk_box_pack_start(GTK_BOX(root), paned, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(root), action_bar, FALSE, FALSE, 0);
 
     gtk_container_add(GTK_CONTAINER(window), root);
 
+    edens_navigation_setup(
+        file_area,
+        toolbar_get_back_button(toolbar),
+        toolbar_get_forward_button(toolbar),
+        toolbar_get_path_entry(toolbar),
+        action_bar_get_status_label(action_bar));
+    fast_directories_bind(sidebar, file_area);
+
     edens_apply_theme(window);
 
-    int error = file_area_load_directory(file_area, start_path);
-
-    if (error != 0)
-    {
-        fprintf(stderr, "Erro ao ler diretório '%s': %d\n", start_path, error);
+    if (!edens_navigation_go(file_area, start_path)) {
+        fprintf(stderr, "Erro ao ler diretório '%s'\n", start_path);
     }
 
     gtk_widget_show_all(window);
@@ -91,10 +99,6 @@ int main(int argc, char *argv[])
         (gpointer) start_path
     );
 
-    /*
-     * O caminho é processado por nós.
-     * O GTK recebe somente o argumento do executável.
-     */
     int app_argc = 1;
 
     int status = g_application_run(

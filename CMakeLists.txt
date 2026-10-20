@@ -120,6 +120,7 @@ add_executable(edens
     filemanager/src/ui/header_bar/header_bar.c
     filemanager/src/ui/main_box/mainbox.c
     filemanager/src/ui/toolbar/toolbar.c
+    filemanager/src/ui/navigation/navigation.c
     filemanager/src/ui/file_area/filearea.c
     filemanager/src/ui/scrolled_window/scrolledwindow.c
     filemanager/src/ui/fast_directories/fast_directories.c

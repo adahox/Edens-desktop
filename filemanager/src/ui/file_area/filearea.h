@@ -5,9 +5,9 @@
 #include "processors/directories.h"
 
 /* Espaçamento da grelha (GtkFlowBox) — ajuste aqui. */
-#define EDENS_FILE_AREA_ROW_SPACING 4
-#define EDENS_FILE_AREA_COLUMN_SPACING 6
-#define EDENS_FILE_AREA_MARGIN 0
+#define EDENS_FILE_AREA_ROW_SPACING 14
+#define EDENS_FILE_AREA_COLUMN_SPACING 12
+#define EDENS_FILE_AREA_MARGIN 6
 /* GTK exige > 0; default 7 estica colunas. Valor alto ≈ sem limite por linha. */
 #define EDENS_FILE_AREA_MAX_CHILDREN_PER_LINE 4096
 

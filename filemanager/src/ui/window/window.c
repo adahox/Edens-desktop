@@ -15,8 +15,8 @@ static void on_window_realize(GtkWidget *window, gpointer user_data)
 static void set_window_properties(EWidget *window)
 {
     add_prop(window, "resizable", TRUE);
-    add_prop(window, "default-width", 800);
-    add_prop(window, "default-height", 600);
+    add_prop(window, "default-width", 1100);
+    add_prop(window, "default-height", 720);
 
     add_event(
         window,
@@ -44,7 +44,7 @@ GtkWidget *build_window(GtkApplication *app)
 
     gtk_application_window_set_show_menubar(
         GTK_APPLICATION_WINDOW(window->object),
-        TRUE
+        FALSE
     );
 
     gtk_application_add_window(app, GTK_WINDOW(window->object));

@@ -1,74 +1,297 @@
-window {
-    background-color: #dfdfdf;
+/* Eden Explorer — garden glass
+   Canvas mist + ink sidebar + floating sheet. Not a dark settings clone. */
+
+* {
+    font-family: "Segoe UI", "Ubuntu", "Cantarell", sans-serif;
+}
+
+window,
+#window {
+    background-color: #D5E0E8;
+    color: #17323A;
+}
+
+headerbar,
+#header-bar {
+    background-color: #D5E0E8;
+    background-image: none;
+    color: #17323A;
+    border: none;
+    box-shadow: none;
+    min-height: 36px;
+    padding: 2px 12px;
+}
+
+headerbar label,
+#header-bar label {
+    color: #17323A;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+button.titlebutton {
+    color: #17323A;
 }
 
 #main_box {
-    background-color: #dfdfdf;
+    background-color: #D5E0E8;
+    background-image: linear-gradient(
+        145deg,
+        #E7F0F4 0%,
+        #D5E0E8 42%,
+        #C9D8C4 100%
+    );
 }
 
+#explorer-paned {
+    background-color: transparent;
+}
+
+#explorer-paned separator {
+    background-color: transparent;
+    min-width: 0;
+}
+
+/* —— ink garden sidebar —— */
 #fast_directories {
-    border-right: 1px solid rgba(0, 0, 0, 0.15);
+    background-color: #0F3D3E;
+    background-image: linear-gradient(
+        180deg,
+        #145455 0%,
+        #0F3D3E 55%,
+        #0B2F30 100%
+    );
+    border: none;
+    border-right: none;
+    padding: 28px 18px 24px 18px;
+    min-width: 236px;
 }
 
-#scrolled-window {
-    border: 0px;
-    background-color: #ffffff;
+#sidebar-brand {
+    color: #F4FFF7;
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    margin: 0 6px 2px 6px;
 }
 
-#file-scroll-viewport {
-    background-color: #ffffff;
+#sidebar-title {
+    color: rgba(232, 245, 233, 0.62);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    margin: 0 8px 4px 8px;
 }
 
-#content {
-    background-color: #ffffff;
+button.place-button {
+    background-color: transparent;
+    border: none;
+    border-radius: 16px;
+    padding: 11px 12px;
+    color: #E8F5E9;
+    box-shadow: none;
+    margin: 2px 0;
 }
 
-#scrolled-window viewport {
-    background-color: #ffffff;
-    border-width: 0;
+button.place-button:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+}
+
+button.place-button:active {
+    background-color: rgba(255, 107, 74, 0.28);
+}
+
+button.place-button label {
+    color: #EAF7EE;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+button.place-button image {
+    color: #9FD0B0;
+}
+
+/* —— stage / right plane —— */
+#stage {
+    background-color: transparent;
+    padding: 18px 22px 14px 18px;
 }
 
 #toolbar {
-   padding: 8px 6px;
-}
-
-#toolbar:hover {
-   border-bottom: 1px solid #d3d3d3;
-   background-color: #f0f0f0;
-   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-   border-radius: 6px;
-   margin-bottom: 10px;
-   margin-top: 10px;
-   margin-left: 10px;
-   margin-right: 10px;
-}
-
-#file-area-bg {
-    background-color: #ffffff;
-}
-
-#file-area-layer {
     background-color: transparent;
+    border: none;
+    padding: 4px 4px 16px 4px;
+    margin: 0;
 }
 
+#stage-heading {
+    color: #17323A;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin: 0 0 2px 2px;
+}
+
+#toolbar-row {
+    background-color: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(23, 50, 58, 0.08);
+    border-radius: 22px;
+    padding: 8px 10px;
+}
+
+#toolbar-nav {
+    background-color: #0F3D3E;
+    border: none;
+    border-radius: 16px;
+    padding: 3px;
+}
+
+button.nav-button {
+    background-color: transparent;
+    border: none;
+    border-radius: 13px;
+    padding: 8px 10px;
+    color: #F4FFF7;
+    box-shadow: none;
+    min-width: 38px;
+    min-height: 38px;
+}
+
+button.nav-button:hover {
+    background-color: rgba(255, 107, 74, 0.85);
+    color: #FFFFFF;
+}
+
+button.nav-button:disabled {
+    opacity: 0.28;
+}
+
+button.ghost-button {
+    background-color: transparent;
+    border: none;
+    border-radius: 14px;
+    padding: 8px;
+    color: #3A5A62;
+    box-shadow: none;
+    min-width: 38px;
+    min-height: 38px;
+}
+
+button.ghost-button:hover {
+    background-color: rgba(15, 61, 62, 0.10);
+    color: #0F3D3E;
+}
+
+entry.path-entry,
+#path-entry {
+    background-color: transparent;
+    color: #17323A;
+    border: none;
+    border-radius: 0;
+    padding: 8px 6px;
+    caret-color: #FF6B4A;
+    box-shadow: none;
+    min-height: 34px;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+entry.path-entry:focus,
+#path-entry:focus {
+    border: none;
+    box-shadow: none;
+}
+
+entry.path-entry selection,
+#path-entry selection {
+    background-color: #FF6B4A;
+    color: #FFFFFF;
+}
+
+/* —— floating file sheet —— */
+#file-sheet {
+    background-color: #F7FBFC;
+    border: 1px solid rgba(23, 50, 58, 0.06);
+    border-radius: 28px;
+    box-shadow: 0 18px 40px rgba(23, 50, 58, 0.10);
+}
+
+#content,
+#scrolled-window,
+#file-scroll-viewport,
+#scrolled-window viewport,
+#file-area-bg {
+    background-color: transparent;
+    border: none;
+    border-radius: 28px;
+}
+
+#file-area-layer,
 #file-area {
     background-color: transparent;
-    padding: 6px;
+    padding: 22px 18px;
 }
 
 #file-item {
     border: 1px solid transparent;
-    border-radius: 3px;
-    padding: 2px 0;
+    border-radius: 20px;
+    padding: 12px 8px 10px 8px;
     background-color: transparent;
 }
 
-#file-item-label {
-    font-size: 11px;
-    color: #2c2c2c;
+#file-item:hover,
+#file-item:backdrop:hover {
+    background-color: rgba(15, 61, 62, 0.07);
+    border-color: rgba(15, 61, 62, 0.08);
 }
 
-#file-item:hover {
-    border-color: transparent;
-    background-color: rgba(0, 0, 0, 0.06);
+#file-item:active {
+    background-color: rgba(255, 107, 74, 0.14);
+    border-color: rgba(255, 107, 74, 0.22);
+}
+
+#file-item-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: #1C3A40;
+}
+
+#action-bar {
+    background-color: transparent;
+    border: none;
+    color: #4A6A72;
+    padding: 10px 8px 2px 8px;
+    box-shadow: none;
+}
+
+#action-bar revealer box,
+actionbar > revealer > box {
+    background-color: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+}
+
+#status {
+    color: #4A6A72;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    padding: 0 6px;
+}
+
+scrollbar {
+    background: transparent;
+    margin: 4px;
+}
+
+scrollbar slider {
+    background-color: rgba(15, 61, 62, 0.28);
+    border-radius: 999px;
+    min-width: 7px;
+    min-height: 7px;
+}
+
+scrollbar slider:hover {
+    background-color: rgba(255, 107, 74, 0.75);
 }
