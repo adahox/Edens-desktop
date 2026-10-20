@@ -1,5 +1,7 @@
-#include "menu.h"
-#include "menu_actions.h"
+#include <gtk/gtk.h>
+#include "core/widgetFactory.h"
+#include "ui/menu/menu.h"
+#include "ui/menu_actions/menu_actions.h"
 
 typedef struct MenuAction {
     char *label;
@@ -15,7 +17,7 @@ static MenuAction file_menu[] = {
     {"Novo", "document-new", "new", "app.new", menu_action_new, "<Control>n", NULL},
     {"Abrir", "document-open", "open", "app.open", menu_action_open, "<Control>o", NULL},
     {"Salvar", "document-save", "save", "app.save", menu_action_save, "<Control>s", NULL},
-    {"Salvar Como", "document-save-as", "save-as", "app.save-as", menu_action_save_as, "<Control>Shift+S", NULL},
+    {"Salvar Como", "document-save-as", "save-as", "app.save-as", menu_action_save_as, "<Control><Shift>s", NULL},
     {"Fechar",   "window-close", "close", "app.close", menu_action_close, "<Control>w", NULL},
     {NULL,  NULL, NULL, NULL, NULL, NULL, NULL},
 };
@@ -71,13 +73,22 @@ void register_actions(GtkApplication *app)
 
 GtkWidget *create_menu_button(GMenu *menu_model)
 {
-    GtkWidget *menu_button = gtk_menu_button_new();
-    GtkWidget *menu_icon = gtk_image_new_from_icon_name("open-menu-symbolic", GTK_ICON_SIZE_BUTTON);
+    EWidget *menu_button = make(GTK_TYPE_MENU_BUTTON, "menu-button");
+    EWidget *menu_icon = make(GTK_TYPE_IMAGE, "menu-button-icon");
 
-    gtk_button_set_image(GTK_BUTTON(menu_button), menu_icon);
-    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_button), G_MENU_MODEL(menu_model));
+    add_prop(menu_icon, "icon-name", "open-menu-symbolic");
+    add_prop(menu_icon, "icon-size", GTK_ICON_SIZE_BUTTON);
 
-    return menu_button;
+    gtk_button_set_image(
+        GTK_BUTTON(menu_button->object),
+        GTK_WIDGET(menu_icon->object)
+    );
+    gtk_menu_button_set_menu_model(
+        GTK_MENU_BUTTON(menu_button->object),
+        G_MENU_MODEL(menu_model)
+    );
+
+    return GTK_WIDGET(menu_button->object);
 }
 
 static void addIcon(GMenuItem *item, const char *iconName)
@@ -89,11 +100,11 @@ static void addIcon(GMenuItem *item, const char *iconName)
     GIcon *icon = g_themed_icon_new(iconName);
     g_menu_item_set_icon(item, icon);
     g_object_unref(icon);
-}   
+}
 
 static GMenu *build_menu(MenuAction *actions, size_t count)
 {
-    GMenu *menu = g_menu_new(); 
+    GMenu *menu = g_menu_new();
 
     for (size_t i = 0; i < count; i++) {
 
@@ -119,4 +130,3 @@ GMenu *create_menu(void)
 {
     return build_menu(menu_actions, sizeof(menu_actions) / sizeof(menu_actions[0]));
 }
-

@@ -90,20 +90,49 @@ target_link_libraries(eden-installer
         Qt6::Widgets
 )
 
-# Eden File Manager: C / GTK 3
+# Eden File Manager: C / GTK 3 (vendored from ~/dev/edens)
+find_program(GLIB_COMPILE_RESOURCES NAMES glib-compile-resources REQUIRED)
+
+set(EDENS_GRESOURCE_XML ${CMAKE_CURRENT_SOURCE_DIR}/filemanager/gresources.xml)
+set(EDENS_RESOURCES_C ${CMAKE_CURRENT_BINARY_DIR}/edens_resources.c)
+
+add_custom_command(
+    OUTPUT ${EDENS_RESOURCES_C}
+    COMMAND ${GLIB_COMPILE_RESOURCES}
+        --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/filemanager
+        --generate-source
+        --target=${EDENS_RESOURCES_C}
+        ${EDENS_GRESOURCE_XML}
+    DEPENDS
+        ${EDENS_GRESOURCE_XML}
+        ${CMAKE_CURRENT_SOURCE_DIR}/filemanager/data/edens.css
+        ${CMAKE_CURRENT_SOURCE_DIR}/filemanager/data/icons/icon-task-manager.png
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/filemanager
+    VERBATIM
+)
+
 add_executable(edens
     filemanager/src/main.c
+    filemanager/src/core/widget/events.c
+    filemanager/src/core/widgetFactory.c
     filemanager/src/processors/directories.c
     filemanager/src/ui/window/window.c
-    filemanager/src/ui/mainbox.c
-    filemanager/src/ui/toolbar.c
-    filemanager/src/ui/filearea.c
-    filemanager/src/ui/scrolledwindow.c
-    filemanager/src/ui/fileitem.c
-    filemanager/src/ui/window/menu.c
-    filemanager/src/ui/window/menu_actions.c
-    filemanager/src/ui/actionBar.c
-    
+    filemanager/src/ui/header_bar/header_bar.c
+    filemanager/src/ui/main_box/mainbox.c
+    filemanager/src/ui/toolbar/toolbar.c
+    filemanager/src/ui/file_area/filearea.c
+    filemanager/src/ui/scrolled_window/scrolledwindow.c
+    filemanager/src/ui/fast_directories/fast_directories.c
+    filemanager/src/ui/content/content.c
+    filemanager/src/ui/explorer_pane/explorer_pane.c
+    filemanager/src/ui/file_item/fileitem.c
+    filemanager/src/ui/menu/menu.c
+    filemanager/src/ui/menu_actions/menu_actions.c
+    filemanager/src/ui/action_bar/actionBar.c
+    filemanager/src/ui/theme/theme.c
+    filemanager/src/ui/icons/icons.c
+    filemanager/src/ui/app_icon/app_icon.c
+    ${EDENS_RESOURCES_C}
 )
 
 target_include_directories(edens
@@ -120,6 +149,15 @@ target_compile_options(edens
 target_link_libraries(edens
     PRIVATE
         PkgConfig::GTK3
+)
+
+add_custom_command(
+    TARGET edens
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/filemanager/data
+        $<TARGET_FILE_DIR:edens>/data
+    VERBATIM
 )
 
 add_executable(windowmanager-test

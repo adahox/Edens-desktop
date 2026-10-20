@@ -1,4 +1,4 @@
-#include "menu.h"
+#include "ui/menu_actions/menu_actions.h"
 
 void menu_action_about(GSimpleAction *action, GVariant *parameter, gpointer user_data)
 {

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/app/edens">
+    <file alias="file-icon-manager.png">data/icons/icon-task-manager.png</file>
+    <file alias="edens.css">data/edens.css</file>
+  </gresource>
+</gresources>

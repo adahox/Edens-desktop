@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Eden's Explorer
+Comment=GTK file manager learning project
+Exec=edens
+Icon=com.edens.FileManager
+StartupWMClass=Eden's Explorer
+Categories=Utility;FileManager;
+Terminal=false

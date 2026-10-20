@@ -1,32 +1,53 @@
 #include <gtk/gtk.h>
-#include "header_bar.c"
-#include "window.h"
-#include "menu.h"
+#include "ui/window/window.h"
+#include "ui/header_bar/header_bar.h"
+#include "ui/menu/menu.h"
+#include "ui/app_icon/app_icon.h"
+#include "core/widgetFactory.h"
+#include "core/widget/events.h"
 
-static void set_window_properties(GtkWidget *window)
+static void on_window_realize(GtkWidget *window, gpointer user_data)
 {
-    gtk_window_set_resizable(GTK_WINDOW(window), TRUE);
-    gtk_window_set_default_size(GTK_WINDOW(window), 800, 600);
-    gtk_window_unmaximize(GTK_WINDOW(window));
+    (void)user_data;
+    edens_window_set_icon(window);
+}
+
+static void set_window_properties(EWidget *window)
+{
+    add_prop(window, "resizable", TRUE);
+    add_prop(window, "default-width", 800);
+    add_prop(window, "default-height", 600);
+
+    add_event(
+        window,
+        "realize",
+        G_CALLBACK(on_window_realize),
+        NULL,
+        NULL
+    );
 }
 
 GtkWidget *build_window(GtkApplication *app)
 {
-    GtkWidget *window = gtk_application_window_new(app);
+    EWidget *window = make(GTK_TYPE_APPLICATION_WINDOW, "window");
+
     set_window_properties(window);
 
-    // header bar
     GtkWidget *header_bar = create_header_bar();
-    gtk_window_set_titlebar(GTK_WINDOW(window), header_bar);
+    gtk_window_set_titlebar(GTK_WINDOW(window->object), header_bar);
 
-    // menu
     register_actions(app);
 
     GMenu *menu = create_menu();
     gtk_application_set_menubar(GTK_APPLICATION(app), G_MENU_MODEL(menu));
     g_object_unref(menu);
-    
-    gtk_application_window_set_show_menubar(GTK_APPLICATION_WINDOW(window), TRUE);
 
-    return window;
+    gtk_application_window_set_show_menubar(
+        GTK_APPLICATION_WINDOW(window->object),
+        TRUE
+    );
+
+    gtk_application_add_window(app, GTK_WINDOW(window->object));
+
+    return GTK_WIDGET(window->object);
 }

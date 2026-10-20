@@ -1,7 +1,7 @@
 #ifndef MENU_ACTIONS_H
 #define MENU_ACTIONS_H
 
-#include "menu.h"
+#include <gtk/gtk.h>
 
 void menu_action_about(GSimpleAction *action, GVariant *parameter, gpointer user_data);
 void menu_action_files(GSimpleAction *action, GVariant *parameter, gpointer user_data);
