@@ -33,6 +33,7 @@ private:
         QString haystack;
         QStringList arguments;
         QStringList matchClasses;
+        QString iconName;
         QIcon icon;
         bool terminal = false;
     };

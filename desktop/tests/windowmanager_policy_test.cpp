@@ -47,11 +47,18 @@ int main()
     const MonitorRect area = workAreaFor(monitors[0], 32);
     expect(area.y == 32 && area.height == 1048 && area.width == 1920, "area util desconta o painel");
 
-    const MonitorRect secondArea = clampedWorkArea(monitors[1], 3200, 1080, 0, 0, 28, 0);
+    const MonitorRect primaryArea = clampedWorkArea(monitors[0], 3200, 1080, 0, 0, 28, 64);
     expect(
-        secondArea.x == 1920 && secondArea.y == 28 &&
-            secondArea.width == 1280 && secondArea.height == 996,
-        "maximize no segundo monitor");
+        primaryArea.x == 0 && primaryArea.y == 28 &&
+            primaryArea.width == 1920 && primaryArea.height == 988,
+        "principal desconta barra e dock");
+
+    // Secondary monitors ignore global struts: full glass for apps.
+    const MonitorRect second = monitors[1];
+    expect(
+        second.x == 1920 && second.y == 0 &&
+            second.width == 1280 && second.height == 1024,
+        "secundario fica livre");
 
     const TitleBarButtons buttons = titleBarButtons(400);
     expect(containsButton(buttons.close, buttons.close.x + 1, buttons.close.y + 1), "botao fechar");

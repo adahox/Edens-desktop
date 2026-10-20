@@ -14,6 +14,7 @@ struct MonitorRect {
     int16_t y = 0;
     uint16_t width = 1;
     uint16_t height = 1;
+    bool primary = false;
 };
 
 inline FrameSize clampFrameSize(

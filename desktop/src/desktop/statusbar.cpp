@@ -1,5 +1,6 @@
 #include "desktop/statusbar.hpp"
 #include "desktop/desktopwindow.hpp"
+#include "desktop/networkmenu.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -731,6 +732,23 @@ QPixmap powerIcon()
     painter.setBrush(Qt::NoBrush);
     painter.drawArc(QRectF(3.4, 4.6, 11.2, 11.2), 40 * 16, 300 * 16);
     painter.drawLine(QPointF(9, 2.2), QPointF(9, 8.4));
+    return pixmap;
+}
+
+QPixmap networkIcon()
+{
+    QPixmap pixmap(18, 18);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(QColor(QStringLiteral("#1C1C1E")), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawArc(QRectF(2.2, 5.5, 13.6, 13.6), 40 * 16, 100 * 16);
+    painter.drawArc(QRectF(4.4, 7.8, 9.2, 9.2), 40 * 16, 100 * 16);
+    painter.setBrush(QColor(QStringLiteral("#1C1C1E")));
+    painter.setPen(Qt::NoPen);
+    painter.drawEllipse(QPointF(9, 14.2), 1.55, 1.55);
     return pixmap;
 }
 
@@ -1631,6 +1649,16 @@ StatusBar::StatusBar(QWidget *parent)
     clock_->setStyleSheet(QStringLiteral("color: #1C1C1E; background: transparent;"));
     layout->addWidget(clock_);
 
+    networkButton_ = new QPushButton(this);
+    networkButton_->setFlat(true);
+    networkButton_->setCursor(Qt::PointingHandCursor);
+    networkButton_->setFixedSize(28, 22);
+    networkButton_->setIconSize(QSize(18, 18));
+    networkButton_->setIcon(networkIcon());
+    networkButton_->setToolTip(QStringLiteral("Rede, VPN e Bluetooth"));
+    networkButton_->setStyleSheet(buttonStyle);
+    layout->addWidget(networkButton_);
+
     powerButton_ = new QPushButton(this);
     powerButton_->setFlat(true);
     powerButton_->setCursor(Qt::PointingHandCursor);
@@ -1665,6 +1693,9 @@ StatusBar::StatusBar(QWidget *parent)
     });
     connect(sourceButton_, &QPushButton::clicked, this, [this]() {
         openDesktopSource();
+    });
+    connect(networkButton_, &QPushButton::clicked, this, [this]() {
+        openNetworkMenu();
     });
     connect(powerButton_, &QPushButton::clicked, this, [this]() {
         openPowerMenu();
@@ -1826,6 +1857,11 @@ void StatusBar::openPowerMenu()
                 QStringLiteral("Não consegui desligar o computador."));
         }
     }
+}
+
+void StatusBar::openNetworkMenu()
+{
+    NetworkMenu::open(networkButton_);
 }
 
 void StatusBar::publishDockStrut()

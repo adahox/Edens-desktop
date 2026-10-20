@@ -858,11 +858,6 @@ void WindowManager::run()
         }
     }
 
-    running_ = false;
-}
-
-void WindowManager::stop()
-{
     if (keyboardGrabbed_ && isConnected()) {
         xcb_ungrab_keyboard(connection_, XCB_CURRENT_TIME);
         keyboardGrabbed_ = false;
@@ -871,6 +866,12 @@ void WindowManager::stop()
 
     superHeld_ = false;
     superChord_ = false;
+    running_ = false;
+}
+
+void WindowManager::stop()
+{
+    // Signal-safe: only flips the run flag. Cleanup happens when run() exits.
     running_ = false;
 }
 
@@ -942,7 +943,7 @@ bool WindowManager::manageWindow(xcb_window_t client)
     const bool decorated = clientWantsTitleBar(client);
     const uint16_t chrome = clientTopOffset(decorated);
 
-    const MonitorRect area = workArea();
+    const MonitorRect area = workAreaAt(x, y);
 
     if (y < area.y) {
         y = area.y;
@@ -1562,10 +1563,10 @@ void WindowManager::layoutFrame(
     width = size.width;
     height = size.height;
 
-    const int16_t top = workArea().y;
+    const MonitorRect area = workAreaAt(x, y);
 
-    if (y < top) {
-        y = top;
+    if (y < area.y) {
+        y = area.y;
     }
 
     const uint32_t frameValues[] = {

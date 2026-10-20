@@ -24,12 +24,14 @@ private:
     void openGitLogin();
     void openDesktopSource();
     void openPowerMenu();
+    void openNetworkMenu();
     void publishDockStrut();
 
     QRect screen_;
     QLabel *clock_ = nullptr;
     QPushButton *sourceButton_ = nullptr;
     QPushButton *gitButton_ = nullptr;
+    QPushButton *networkButton_ = nullptr;
     QPushButton *powerButton_ = nullptr;
     bool gitActive_ = false;
 };

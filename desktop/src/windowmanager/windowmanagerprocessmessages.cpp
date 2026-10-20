@@ -554,10 +554,10 @@ void WindowManager::processPointerMotion(xcb_generic_event_t* event)
 
     const int16_t newX = static_cast<int16_t>(frameStartX_ + (motion->root_x - dragStartX_));
     int16_t newY = static_cast<int16_t>(frameStartY_ + (motion->root_y - dragStartY_));
-    const int16_t top = workArea().y;
+    const MonitorRect area = workAreaAt(newX, newY);
 
-    if (newY < top) {
-        newY = top;
+    if (newY < area.y) {
+        newY = area.y;
     }
 
     const uint32_t values[] = {
@@ -659,10 +659,10 @@ void WindowManager::beginNetWmMoveResize(
         if (restored != nullptr) {
             int16_t newX = static_cast<int16_t>(rootX - static_cast<int16_t>(restored->width / 2));
             int16_t newY = static_cast<int16_t>(rootY - 16);
-            const int16_t top = workArea().y;
+            const MonitorRect area = workAreaAt(newX, newY);
 
-            if (newY < top) {
-                newY = top;
+            if (newY < area.y) {
+                newY = area.y;
             }
 
             layoutFrame(window, newX, newY, restored->width, restored->height, true);
@@ -1112,11 +1112,11 @@ void WindowManager::processResizeMotion(const xcb_motion_notify_event_t* motion)
         newHeight = window->minimumHeight;
     }
 
-    const int16_t top = workArea().y;
+    const MonitorRect area = workAreaAt(newX, newY);
 
-    if (newY < top) {
-        newHeight -= static_cast<int32_t>(top - newY);
-        newY = top;
+    if (newY < area.y) {
+        newHeight -= static_cast<int32_t>(area.y - newY);
+        newY = area.y;
 
         if (newHeight < window->minimumHeight) {
             newHeight = window->minimumHeight;

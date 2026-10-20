@@ -23,6 +23,17 @@ export EDEN_SESSION=1
 if [[ -x "\${HOME}/.config/eden/apply-monitors.sh" ]]; then
     "\${HOME}/.config/eden/apply-monitors.sh" >/tmp/eden-monitors.log 2>&1 || true
 fi
+# Polkit agent: allows pkexec (instalador .deb, etc.) to ask for password in a GUI.
+for agent in \\
+    /usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 \\
+    /usr/libexec/polkit-gnome-authentication-agent-1 \\
+    /usr/lib/x86_64-linux-gnu/libexec/polkit-kde-authentication-agent-1
+do
+    if [[ -x "\${agent}" ]] && ! pgrep -f "\${agent##*/}" >/dev/null 2>&1; then
+        "\${agent}" >/tmp/eden-polkit.log 2>&1 &
+        break
+    fi
+done
 ${WINDOW_MANAGER} >/tmp/eden-wm.log 2>&1 &
 sleep 0.4
 exec ${DESKTOP}

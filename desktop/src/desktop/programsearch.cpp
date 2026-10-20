@@ -385,7 +385,8 @@ void ProgramSearch::reloadPrograms()
             program.arguments = arguments;
             program.matchClasses = EdenDesktop::matchHints(fields);
             program.terminal = flagIsTrue(fields.value(QStringLiteral("Terminal")));
-            program.icon = programIcon(fields.value(QStringLiteral("Icon")));
+            program.iconName = fields.value(QStringLiteral("Icon"));
+            program.icon = programIcon(program.iconName);
             program.haystack = (
                 name + QLatin1Char(' ') +
                 program.detail + QLatin1Char(' ') +
@@ -488,7 +489,11 @@ void ProgramSearch::launchCurrent()
                 program.name,
                 program.icon,
                 program.matchClasses,
-                pid);
+                pid,
+                {},
+                program.arguments,
+                program.terminal,
+                program.iconName);
         }
 
         hide();

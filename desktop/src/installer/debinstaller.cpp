@@ -14,6 +14,7 @@
 #include <QProcess>
 #include <QProgressBar>
 #include <QLinearGradient>
+#include <QProcessEnvironment>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -332,12 +333,22 @@ void DebInstaller::startInstall()
         installing_ = false;
 
         if (status != QProcess::NormalExit || exitCode != 0) {
-            const QString error = QString::fromUtf8(installProcess_->readAllStandardError()).trimmed();
-            setStatus(
-                error.isEmpty()
-                    ? QStringLiteral("Falha na instalação. Verifique permissões (pkexec).")
-                    : error,
-                true);
+            QString error = QString::fromUtf8(installProcess_->readAllStandardError()).trimmed();
+
+            if (error.isEmpty()) {
+                error = QString::fromUtf8(installProcess_->readAllStandardOutput()).trimmed();
+            }
+
+            if (error.contains(QStringLiteral("/dev/tty"), Qt::CaseInsensitive) ||
+                error.contains(QStringLiteral("authentication agent"), Qt::CaseInsensitive)) {
+                error = QStringLiteral(
+                    "Não foi possível pedir a senha. Reinicie a sessão Eden "
+                    "para carregar o agente Polkit, ou rode o Compilar.");
+            } else if (error.isEmpty()) {
+                error = QStringLiteral("Falha na instalação (pkexec/dpkg).");
+            }
+
+            setStatus(error, true);
             update();
             return;
         }
@@ -349,23 +360,46 @@ void DebInstaller::startInstall()
 
     const QString absolute = QFileInfo(debPath_).absoluteFilePath();
     const QString pkexec = QStandardPaths::findExecutable(QStringLiteral("pkexec"));
-    const QString apt = QStandardPaths::findExecutable(QStringLiteral("apt-get"));
     const QString dpkg = QStandardPaths::findExecutable(QStringLiteral("dpkg"));
+    const QString apt = QStandardPaths::findExecutable(QStringLiteral("apt-get"));
 
-    if (!pkexec.isEmpty() && !apt.isEmpty()) {
+    // Ensure a GUI Polkit agent is alive; without it pkexec falls back to
+    // a text agent and fails with "/dev/tty" in sessions like Eden.
+    const QStringList agents = {
+        QStringLiteral("/usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1"),
+        QStringLiteral("/usr/libexec/polkit-gnome-authentication-agent-1"),
+    };
+
+    for (const QString &agent : agents) {
+        if (QFileInfo::exists(agent)) {
+            QProcess::startDetached(agent, {});
+            break;
+        }
+    }
+
+    if (pkexec.isEmpty() || dpkg.isEmpty()) {
+        installing_ = false;
+        progress_->setVisible(false);
+        setStatus(QStringLiteral("Não encontrei pkexec/dpkg para instalar."), true);
+        update();
+        return;
+    }
+
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("DEBIAN_FRONTEND"), QStringLiteral("noninteractive"));
+    installProcess_->setProcessEnvironment(env);
+
+    if (!apt.isEmpty()) {
+        // Local .deb + auto-fix deps. $1 is the package path.
         installProcess_->start(
             pkexec,
-            {apt, QStringLiteral("install"), QStringLiteral("-y"), absolute});
+            {QStringLiteral("/bin/bash"),
+             QStringLiteral("-c"),
+             QStringLiteral("dpkg -i \"$1\" || apt-get install -f -y"),
+             QStringLiteral("eden-install"),
+             absolute});
         return;
     }
 
-    if (!pkexec.isEmpty() && !dpkg.isEmpty()) {
-        installProcess_->start(pkexec, {dpkg, QStringLiteral("-i"), absolute});
-        return;
-    }
-
-    installing_ = false;
-    progress_->setVisible(false);
-    setStatus(QStringLiteral("Não encontrei pkexec/apt-get para instalar."), true);
-    update();
+    installProcess_->start(pkexec, {dpkg, QStringLiteral("-i"), absolute});
 }

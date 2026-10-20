@@ -34,6 +34,8 @@ qt_add_executable(eden-desktop
     desktop/src/desktop/desktoplaunch.cpp
     desktop/src/desktop/statusbar.hpp
     desktop/src/desktop/statusbar.cpp
+    desktop/src/desktop/networkmenu.hpp
+    desktop/src/desktop/networkmenu.cpp
     desktop/src/desktop/shelllayout.hpp
     desktop/src/desktop/shelllayout.cpp
     desktop/src/desktop/monitorlayout.hpp

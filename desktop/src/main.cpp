@@ -29,7 +29,54 @@
 #include <QtGlobal>
 #include <QProcess>
 #include <QFileInfo>
+#include <QStandardPaths>
 #include "filemanager/filemanagerwindow.hpp"
+
+namespace {
+
+bool processNamedRunning(const QString &needle)
+{
+    QProcess scanner;
+    scanner.start(
+        QStringLiteral("pgrep"),
+        {QStringLiteral("-f"), needle});
+    scanner.waitForFinished(800);
+    return scanner.exitCode() == 0 &&
+           !scanner.readAllStandardOutput().trimmed().isEmpty();
+}
+
+void ensurePolkitAgent()
+{
+    const QStringList agents = {
+        QStringLiteral("/usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1"),
+        QStringLiteral("/usr/libexec/polkit-gnome-authentication-agent-1"),
+        QStringLiteral("/usr/lib/x86_64-linux-gnu/libexec/polkit-kde-authentication-agent-1"),
+        QStandardPaths::findExecutable(QStringLiteral("lxqt-policykit-agent")),
+        QStandardPaths::findExecutable(QStringLiteral("mate-polkit")),
+    };
+
+    for (const QString &agent : agents) {
+        if (agent.isEmpty() || !QFileInfo::exists(agent)) {
+            continue;
+        }
+
+        if (processNamedRunning(agent)) {
+            return;
+        }
+    }
+
+    for (const QString &agent : agents) {
+        if (agent.isEmpty() || !QFileInfo::exists(agent)) {
+            continue;
+        }
+
+        if (QProcess::startDetached(agent, {})) {
+            return;
+        }
+    }
+}
+
+}  // namespace
 
 static bool setDesktopWindowType(xcb_window_t window)
 {
@@ -149,6 +196,7 @@ int main(int argc, char *argv[])
     )"));
 
     EdenMonitors::applySaved();
+    ensurePolkitAgent();
 
     DesktopWindow desktop;
 

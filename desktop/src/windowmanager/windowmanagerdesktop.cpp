@@ -372,8 +372,25 @@ MonitorRect WindowManager::virtualDesktopBounds() const
 
 MonitorRect WindowManager::workArea() const
 {
-    MonitorRect area = virtualDesktopBounds();
+    const std::vector<MonitorRect> monitors = connectedMonitors();
 
+    for (const MonitorRect& monitor : monitors) {
+        if (!monitor.primary) {
+            continue;
+        }
+
+        const MonitorRect bounds = virtualDesktopBounds();
+        return clampedWorkArea(
+            monitor,
+            bounds.x + static_cast<int>(bounds.width),
+            bounds.y + static_cast<int>(bounds.height),
+            reservedLeft_,
+            reservedRight_,
+            reservedTop_,
+            reservedBottom_);
+    }
+
+    MonitorRect area = virtualDesktopBounds();
     const uint32_t horizontal =
         static_cast<uint32_t>(reservedLeft_) + reservedRight_;
     const uint32_t vertical =
@@ -418,7 +435,8 @@ std::vector<MonitorRect> WindowManager::connectedMonitors() const
                     static_cast<int16_t>(info[index].x),
                     static_cast<int16_t>(info[index].y),
                     static_cast<uint16_t>(info[index].width),
-                    static_cast<uint16_t>(info[index].height)
+                    static_cast<uint16_t>(info[index].height),
+                    info[index].primary != 0
                 });
             }
 
@@ -433,8 +451,22 @@ std::vector<MonitorRect> WindowManager::connectedMonitors() const
             0,
             0,
             screen_->width_in_pixels,
-            screen_->height_in_pixels
+            screen_->height_in_pixels,
+            true
         });
+    }
+
+    bool havePrimary = false;
+
+    for (const MonitorRect& monitor : monitors) {
+        if (monitor.primary) {
+            havePrimary = true;
+            break;
+        }
+    }
+
+    if (!havePrimary && !monitors.empty()) {
+        monitors.front().primary = true;
     }
 
     return monitors;
@@ -449,6 +481,14 @@ MonitorRect WindowManager::workAreaAt(int16_t x, int16_t y) const
         return workArea();
     }
 
+    const MonitorRect& monitor = monitors[static_cast<std::size_t>(index)];
+
+    // Status bar and dock live only on the primary display.
+    // Secondary monitors stay fully free for windows.
+    if (!monitor.primary) {
+        return monitor;
+    }
+
     const MonitorRect bounds = virtualDesktopBounds();
     const int absoluteRight =
         bounds.x + static_cast<int>(bounds.width);
@@ -456,7 +496,7 @@ MonitorRect WindowManager::workAreaAt(int16_t x, int16_t y) const
         bounds.y + static_cast<int>(bounds.height);
 
     return clampedWorkArea(
-        monitors[static_cast<std::size_t>(index)],
+        monitor,
         absoluteRight,
         absoluteBottom,
         reservedLeft_,
@@ -539,7 +579,6 @@ void WindowManager::revealManagedFrames()
         return;
     }
 
-    const MonitorRect area = workArea();
     std::vector<xcb_window_t> clients;
     clients.reserve(windows_.size());
 
@@ -569,6 +608,8 @@ void WindowManager::revealManagedFrames()
         const uint16_t width = geometry->width;
         const uint16_t height = geometry->height;
         std::free(geometry);
+
+        const MonitorRect area = workAreaAt(x, y);
 
         if (y < area.y) {
             layoutFrame(window, x, area.y, width, height, !window.maximized);

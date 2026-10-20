@@ -3,10 +3,12 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QImage>
 #include <QLocale>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QThread>
 
 #include <QtGui/qguiapplication_platform.h>
 #include <xcb/xcb.h>
@@ -641,6 +643,174 @@ bool closeWindow(quint32 window)
     return true;
 }
 
+QVector<ClientWindow> matchingWindows(
+    const QStringList &classHints,
+    const QVector<qint64> &pids,
+    const QStringList &titleHints)
+{
+    QVector<ClientWindow> matches;
+    QVector<quint32> seen;
+
+    for (const ClientWindow &client : listClientWindows()) {
+        if (!matchesHints(client, classHints, pids, titleHints)) {
+            continue;
+        }
+
+        if (seen.contains(client.window)) {
+            continue;
+        }
+
+        seen.push_back(client.window);
+        matches.push_back(client);
+    }
+
+    return matches;
+}
+
+namespace {
+
+QPixmap pixmapFromXcbImage(
+    const xcb_get_image_reply_t *reply,
+    int width,
+    int height)
+{
+    if (reply == nullptr || width <= 0 || height <= 0) {
+        return {};
+    }
+
+    const auto *bytes = xcb_get_image_data(reply);
+    const int length = xcb_get_image_data_length(reply);
+
+    if (bytes == nullptr || length <= 0) {
+        return {};
+    }
+
+    const int pixels = width * height;
+
+    if (pixels <= 0 || length < pixels) {
+        return {};
+    }
+
+    const int bytesPerPixel = length / pixels;
+
+    if (bytesPerPixel < 3) {
+        return {};
+    }
+
+    QImage image(width, height, QImage::Format_RGB32);
+
+    for (int y = 0; y < height; ++y) {
+        const uchar *src = bytes + (y * width * bytesPerPixel);
+        auto *dst = reinterpret_cast<QRgb *>(image.scanLine(y));
+
+        for (int x = 0; x < width; ++x) {
+            const uchar *pixel = src + (x * bytesPerPixel);
+            dst[x] = qRgb(pixel[2], pixel[1], pixel[0]);
+        }
+    }
+
+    return QPixmap::fromImage(image);
+}
+
+QPixmap grabDrawable(
+    xcb_connection_t *connection,
+    xcb_drawable_t drawable,
+    int16_t x,
+    int16_t y,
+    uint16_t width,
+    uint16_t height)
+{
+    if (connection == nullptr ||
+        drawable == XCB_NONE ||
+        width == 0 ||
+        height == 0) {
+        return {};
+    }
+
+    const auto cookie = xcb_get_image(
+        connection,
+        XCB_IMAGE_FORMAT_Z_PIXMAP,
+        drawable,
+        x,
+        y,
+        width,
+        height,
+        ~0u);
+    xcb_generic_error_t *error = nullptr;
+    xcb_get_image_reply_t *reply =
+        xcb_get_image_reply(connection, cookie, &error);
+    std::free(error);
+
+    const QPixmap pixmap = pixmapFromXcbImage(reply, width, height);
+    std::free(reply);
+    return pixmap;
+}
+
+}  // namespace
+
+QPixmap captureWindowPixmap(quint32 window)
+{
+    xcb_connection_t *connection = x11();
+
+    if (connection == nullptr || window == 0) {
+        return {};
+    }
+
+    const xcb_window_t root = rootWindow(connection);
+
+    // Bring this window alone to the front so a root grab (fallback) is unique.
+    const uint32_t stackValues[] = {XCB_STACK_MODE_ABOVE};
+    xcb_configure_window(
+        connection,
+        window,
+        XCB_CONFIG_WINDOW_STACK_MODE,
+        stackValues);
+    activateWindow(window);
+    xcb_flush(connection);
+    QThread::msleep(35);
+
+    const auto geometryCookie = xcb_get_geometry(connection, window);
+    xcb_get_geometry_reply_t *geometry =
+        xcb_get_geometry_reply(connection, geometryCookie, nullptr);
+
+    if (geometry == nullptr) {
+        return {};
+    }
+
+    const uint16_t width = geometry->width;
+    const uint16_t height = geometry->height;
+    std::free(geometry);
+
+    QPixmap shot = grabDrawable(connection, window, 0, 0, width, height);
+
+    if (!shot.isNull()) {
+        return shot;
+    }
+
+    if (root == XCB_WINDOW_NONE) {
+        return {};
+    }
+
+    const auto translateCookie = xcb_translate_coordinates(
+        connection,
+        window,
+        root,
+        0,
+        0);
+    xcb_translate_coordinates_reply_t *translated =
+        xcb_translate_coordinates_reply(connection, translateCookie, nullptr);
+
+    if (translated == nullptr) {
+        return {};
+    }
+
+    const int16_t rootX = translated->dst_x;
+    const int16_t rootY = translated->dst_y;
+    std::free(translated);
+
+    return grabDrawable(connection, root, rootX, rootY, width, height);
+}
+
 bool activateMatching(
     const QStringList &classHints,
     const QVector<qint64> &pids,
@@ -649,11 +819,7 @@ bool activateMatching(
     quint32 hiddenWindow = 0;
     quint32 visibleWindow = 0;
 
-    for (const ClientWindow &client : listClientWindows()) {
-        if (!matchesHints(client, classHints, pids, titleHints)) {
-            continue;
-        }
-
+    for (const ClientWindow &client : matchingWindows(classHints, pids, titleHints)) {
         if (client.hidden) {
             hiddenWindow = client.window;
             break;

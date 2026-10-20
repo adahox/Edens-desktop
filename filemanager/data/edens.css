@@ -235,7 +235,7 @@ entry.path-entry selection,
 #file-item {
     border: 1px solid transparent;
     border-radius: 20px;
-    padding: 12px 8px 10px 8px;
+    padding: 14px 10px 12px 10px;
     background-color: transparent;
 }
 
@@ -248,6 +248,14 @@ entry.path-entry selection,
 #file-item:active {
     background-color: rgba(255, 107, 74, 0.14);
     border-color: rgba(255, 107, 74, 0.22);
+}
+
+#file-icon {
+    color: #3A5A62;
+}
+
+#file-item.file-item-directory #file-icon {
+    color: #0F3D3E;
 }
 
 #file-item-label {

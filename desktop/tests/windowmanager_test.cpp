@@ -1,11 +1,25 @@
 #include "windowmanager/windowmanager.hpp"
 
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <ios>
+#include <unistd.h>
 
 namespace {
+
+volatile std::sig_atomic_t gStopRequested = 0;
+WindowManager *gWindowManager = nullptr;
+
+void handleStopSignal(int)
+{
+    gStopRequested = 1;
+
+    if (gWindowManager != nullptr) {
+        gWindowManager->stop();
+    }
+}
 
 bool environmentIs(const char *name, const char *expected)
 {
@@ -45,6 +59,9 @@ int main()
     }
 
     WindowManager windowManager;
+    gWindowManager = &windowManager;
+    std::signal(SIGTERM, handleStopSignal);
+    std::signal(SIGINT, handleStopSignal);
 
     if (!windowManager.connect()) {
         std::cerr << "Falha ao conectar ao servidor X11.\n";
@@ -53,7 +70,23 @@ int main()
 
     std::cout << "Conexão X11 estabelecida com sucesso.\n";
 
-    if (!windowManager.acquireControl()) {
+    bool acquired = false;
+
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        if (gStopRequested != 0) {
+            break;
+        }
+
+        if (windowManager.acquireControl()) {
+            acquired = true;
+            break;
+        }
+
+        // Compilar restarts the WM quickly; wait for the previous owner to leave.
+        usleep(40000);
+    }
+
+    if (!acquired) {
         std::cerr
             << "Não foi possível assumir o controle da janela raiz.\n"
             << "Outro gerenciador pode estar ativo nesta tela.\n";
@@ -63,7 +96,7 @@ int main()
 
     std::cout << "Controle da janela raiz adquirido com sucesso.\n";
 
-
     windowManager.run();
+    gWindowManager = nullptr;
     return 0;
 }

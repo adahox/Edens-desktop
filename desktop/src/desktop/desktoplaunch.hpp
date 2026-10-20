@@ -2,6 +2,7 @@
 
 #include <QHash>
 #include <QIcon>
+#include <QPixmap>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -29,6 +30,11 @@ bool launchDesktopFile(const QString &desktopPath, qint64 *pid = nullptr);
 bool launchCommand(const QStringList &arguments, bool terminal, qint64 *pid = nullptr);
 
 [[nodiscard]] QVector<ClientWindow> listClientWindows();
+[[nodiscard]] QVector<ClientWindow> matchingWindows(
+    const QStringList &classHints,
+    const QVector<qint64> &pids,
+    const QStringList &titleHints = {});
+[[nodiscard]] QPixmap captureWindowPixmap(quint32 window);
 bool activateWindow(quint32 window);
 bool closeWindow(quint32 window);
 bool activateMatching(

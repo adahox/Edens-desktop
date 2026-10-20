@@ -2,6 +2,9 @@
 
 #include <QAbstractNativeEventFilter>
 #include <QObject>
+#include <QPixmap>
+#include <QPoint>
+#include <QRect>
 
 #include <xcb/xcb.h>
 
@@ -15,7 +18,9 @@ public:
 private:
     ScreenshotService();
     void grabHotkey();
-    void capture();
+    void captureFull();
+    void captureRegion();
+    void saveShot(const QPixmap &shot);
 
     xcb_timestamp_t lastRelease_ = 0;
     bool haveRelease_ = false;

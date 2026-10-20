@@ -128,17 +128,23 @@ GtkWidget *build_file_item(GtkWidget *file_area, EdensDirectoryEntry *entry)
     EWidget *item  = make(GTK_TYPE_BOX, "file-item-content");
 
     add_prop(item, "orientation", GTK_ORIENTATION_VERTICAL);
-    add_prop(item, "spacing", 4);
+    add_prop(item, "spacing", 8);
     add_prop(item, "halign", GTK_ALIGN_CENTER);
 
+    gtk_style_context_add_class(
+        gtk_widget_get_style_context(GTK_WIDGET(shell->object)),
+        entry->type == EDENS_ENTRY_DIRECTORY
+            ? "file-item-directory"
+            : "file-item-file");
+
     EWidget *file_icon = make(GTK_TYPE_IMAGE, "file-icon");
-    add_prop(file_icon, "icon-name", "text-x-generic");
+    add_prop(file_icon, "icon-name", "text-x-generic-symbolic");
     add_prop(file_icon, "icon-size", GTK_ICON_SIZE_DND);
     add_prop(file_icon, "pixel-size", FILE_ICON_SIZE);
     add_prop(file_icon, "halign", GTK_ALIGN_CENTER);
 
     if (entry->type == EDENS_ENTRY_DIRECTORY) {
-        add_prop(file_icon, "icon-name", "folder");
+        add_prop(file_icon, "icon-name", "folder-symbolic");
     }
 
     EWidget *file_label = make(GTK_TYPE_LABEL, "file-item-label");

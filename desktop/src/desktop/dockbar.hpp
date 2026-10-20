@@ -33,7 +33,10 @@ public:
         const QIcon &icon,
         const QStringList &matchClasses = {},
         qint64 pid = 0,
-        const QStringList &matchTitles = {});
+        const QStringList &matchTitles = {},
+        const QStringList &launchArgs = {},
+        bool terminal = false,
+        const QString &iconName = {});
     void noteClosed(const QString &label);
 
 protected:
@@ -48,6 +51,8 @@ protected:
     void showEntryMenu(int index);
     void activateOrLaunch(int index);
     void closeEntry(int index);
+    void keepInDock(int index);
+    void removeFromDock(int index);
     void startBuild(int index);
     void finishBuild(int exitCode, bool normalExit);
 
@@ -56,6 +61,9 @@ private:
     {
         QString label;
         QPixmap icon;
+        QString iconName;
+        QStringList launchArgs;
+        bool terminal = false;
         bool separator = false;
         bool desktopMenu = false;
         bool buildsDesktop = false;
@@ -63,6 +71,8 @@ private:
         bool loading = false;
         bool ephemeral = false;
         bool closeable = true;
+        bool builtin = false;
+        int openWindows = 0;
         qint64 loadingStarted = 0;
         QStringList matchClasses;
         QStringList matchTitles;
@@ -78,11 +88,18 @@ private:
     void publishDockStrut();
     void beginLoading(int index);
     void tickLoading();
+    void syncOpenWindows();
     void syncLabelFont();
     void rememberPid(int index, qint64 pid);
+    void savePinnedApps();
+    void restoreBuiltinHooks(Entry &entry);
+    void showWindowChooser(int index);
+    [[nodiscard]] bool canManageDockPresence(int index) const;
+    [[nodiscard]] bool entryLooksOpen(int index) const;
     [[nodiscard]] QPainterPath barPath() const;
     [[nodiscard]] bool anyLoading() const;
     [[nodiscard]] bool activateEntry(int index);
+    [[nodiscard]] int openWindowCount(int index) const;
     [[nodiscard]] int findEntry(const QString &label) const;
     [[nodiscard]] int separatorIndex() const;
     [[nodiscard]] int iconSize(int index) const;
@@ -101,6 +118,7 @@ private:
     QPixmap composed_;
     QProcess *buildProcess_ = nullptr;
     QTimer *loadingTimer_ = nullptr;
+    QTimer *syncTimer_ = nullptr;
     int buildIndex_ = -1;
     int hover_ = -1;
     EdenDock::Settings settings_;
@@ -112,4 +130,5 @@ private:
     static constexpr int kLabelGap = 8;
     static constexpr int kBounceMs = 1200;
     static constexpr int kBouncePeak = 18;
+    static constexpr int kMaxDots = 4;
 };
