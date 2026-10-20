@@ -1936,7 +1936,16 @@ void WindowManager::processClientMessage(xcb_generic_event_t* event)
             switchDesktop(window.desktop);
         }
 
-        focusWindow(window, XCB_CURRENT_TIME);
+        // Dock / pager activation must both focus and bring the frame forward.
+        focusWindow(
+            window,
+            message->data.data32[1] != 0
+                ? static_cast<xcb_timestamp_t>(message->data.data32[1])
+                : XCB_CURRENT_TIME);
+        raiseFrame(window);
+        raiseTransients(window.client);
+        raisePanel();
+        xcb_flush(connection_);
         return;
     }
 

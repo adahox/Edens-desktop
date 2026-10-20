@@ -2313,6 +2313,13 @@ void DockBar::syncOpenWindows()
 {
     bool changed = false;
     QVector<int> removeEphemeral;
+    static uint32_t lastDesktop = 0xFFFFFFFFu;
+    const uint32_t desktop = currentDesktop();
+
+    if (desktop != lastDesktop) {
+        lastDesktop = desktop;
+        changed = true;
+    }
 
     for (int index = 0; index < entries_.size(); ++index) {
         Entry &entry = entries_[index];

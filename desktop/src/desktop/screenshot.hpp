@@ -21,6 +21,7 @@ private:
     void captureFull();
     void captureRegion();
     void saveShot(const QPixmap &shot);
+    void copyShot(const QPixmap &shot);
 
     xcb_timestamp_t lastRelease_ = 0;
     bool haveRelease_ = false;

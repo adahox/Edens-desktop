@@ -377,6 +377,34 @@ void WindowManager::processButtonPress(xcb_generic_event_t* event)
         return;
     }
 
+    // --- CLIQUE NO DESKTOP (papel de parede / ícones) ---
+    xcb_window_t desktopTarget = XCB_WINDOW_NONE;
+
+    if (desktopWindows_.contains(button->event) || isDesktopWindow(button->event)) {
+        desktopTarget = button->event;
+    } else if (button->child != XCB_WINDOW_NONE &&
+               (desktopWindows_.contains(button->child) || isDesktopWindow(button->child))) {
+        desktopTarget = button->child;
+    }
+
+    if (desktopTarget != XCB_WINDOW_NONE) {
+        if (focusedFrame_ != XCB_WINDOW_NONE) {
+            clearFocus();
+        }
+
+        xcb_set_input_focus(
+            connection_,
+            XCB_INPUT_FOCUS_POINTER_ROOT,
+            desktopTarget,
+            button->time);
+        xcb_allow_events(
+            connection_,
+            XCB_ALLOW_REPLAY_POINTER,
+            button->time);
+        xcb_flush(connection_);
+        return;
+    }
+
     // --- CLIQUE NA BARRA DE TÍTULO ---
     ManagedWindow* window = findByTitleBar(button->event);
 
@@ -889,6 +917,9 @@ void WindowManager::processConfigureRequest(xcb_generic_event_t* event)
 
     if (managed != windows_.end()) {
         ManagedWindow& window = managed->second;
+        const bool wantsRestack =
+            (configureEvent->value_mask & XCB_CONFIG_WINDOW_STACK_MODE) != 0;
+        const bool restackAllowed = wantsRestack && allowClientRestack(window);
 
         // Maximized clients still try to configure themselves; keep them
         // filling the work area instead of ignoring the request (which left
@@ -915,9 +946,16 @@ void WindowManager::processConfigureRequest(xcb_generic_event_t* event)
                     area.width,
                     area.height,
                     false);
-                xcb_flush(connection_);
             }
 
+            if (restackAllowed &&
+                (configureEvent->stack_mode == XCB_STACK_MODE_ABOVE ||
+                 configureEvent->stack_mode == XCB_STACK_MODE_TOP_IF)) {
+                raiseFrame(window);
+                raisePanel();
+            }
+
+            xcb_flush(connection_);
             return;
         }
 
@@ -973,19 +1011,25 @@ void WindowManager::processConfigureRequest(xcb_generic_event_t* event)
             y == currentY &&
             clamped.width == currentWidth &&
             clamped.height == currentHeight &&
-            (configureEvent->value_mask & XCB_CONFIG_WINDOW_STACK_MODE) == 0) {
+            !wantsRestack) {
             return;
         }
 
         layoutFrame(window, x, y, width, height, true);
 
-        if ((configureEvent->value_mask & XCB_CONFIG_WINDOW_STACK_MODE) != 0) {
-            const uint32_t stackMode[] = {configureEvent->stack_mode};
-            xcb_configure_window(
-                connection_,
-                window.frame,
-                XCB_CONFIG_WINDOW_STACK_MODE,
-                stackMode);
+        if (restackAllowed) {
+            if (configureEvent->stack_mode == XCB_STACK_MODE_ABOVE ||
+                configureEvent->stack_mode == XCB_STACK_MODE_TOP_IF) {
+                raiseFrame(window);
+            } else {
+                const uint32_t stackMode[] = {configureEvent->stack_mode};
+                xcb_configure_window(
+                    connection_,
+                    window.frame,
+                    XCB_CONFIG_WINDOW_STACK_MODE,
+                    stackMode);
+            }
+
             raisePanel();
         }
 

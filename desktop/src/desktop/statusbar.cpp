@@ -46,6 +46,7 @@
 #include <xcb/xcb.h>
 
 #include <cstring>
+#include <functional>
 #include <sys/select.h>
 
 namespace {
@@ -723,17 +724,212 @@ QPixmap gitIcon(bool active)
 
 QPixmap powerIcon()
 {
+    // Clean SF-style power glyph for the status bar.
     QPixmap pixmap(18, 18);
     pixmap.fill(Qt::transparent);
 
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(QColor(QStringLiteral("#1C1C1E")), 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setPen(QPen(QColor(QStringLiteral("#1C1C1E")), 1.55, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.setBrush(Qt::NoBrush);
-    painter.drawArc(QRectF(3.4, 4.6, 11.2, 11.2), 40 * 16, 300 * 16);
-    painter.drawLine(QPointF(9, 2.2), QPointF(9, 8.4));
+    painter.drawArc(QRectF(3.0, 4.2, 12.0, 12.0), 52 * 16, 276 * 16);
+    painter.drawLine(QPointF(9.0, 2.4), QPointF(9.0, 9.0));
     return pixmap;
 }
+
+QPixmap powerMenuGlyph(const QString &kind)
+{
+    QPixmap pixmap(28, 28);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    QColor fill(0xF2, 0xF2, 0xF7);
+    QColor ink(0x1C, 0x1C, 0x1E);
+
+    if (kind == QLatin1String("shutdown")) {
+        fill = QColor(0xFF, 0xEB, 0xEE);
+        ink = QColor(0xFF, 0x3B, 0x30);
+    } else if (kind == QLatin1String("reboot")) {
+        fill = QColor(0xEE, 0xF4, 0xFF);
+        ink = QColor(0x00, 0x7A, 0xFF);
+    } else if (kind == QLatin1String("logout")) {
+        fill = QColor(0xF2, 0xF2, 0xF7);
+        ink = QColor(0x3A, 0x3A, 0x3C);
+    }
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(fill);
+    painter.drawEllipse(QRectF(0.5, 0.5, 27, 27));
+
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(ink, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+
+    if (kind == QLatin1String("shutdown")) {
+        painter.drawArc(QRectF(7.2, 8.0, 13.6, 13.6), 50 * 16, 280 * 16);
+        painter.drawLine(QPointF(14, 6.2), QPointF(14, 13.2));
+    } else if (kind == QLatin1String("reboot")) {
+        painter.drawArc(QRectF(7.5, 7.5, 13.0, 13.0), 40 * 16, 260 * 16);
+        painter.setBrush(ink);
+        painter.setPen(Qt::NoPen);
+        QPolygonF tip;
+        tip << QPointF(18.8, 8.0) << QPointF(22.2, 11.6) << QPointF(16.6, 12.0);
+        painter.drawPolygon(tip);
+    } else {
+        painter.drawRoundedRect(QRectF(7.5, 8.0, 9.5, 12.0), 2.2, 2.2);
+        painter.setPen(QPen(ink, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.drawLine(QPointF(14.5, 14.0), QPointF(21.0, 14.0));
+        painter.setBrush(ink);
+        painter.setPen(Qt::NoPen);
+        QPolygonF tip;
+        tip << QPointF(18.2, 11.0) << QPointF(21.8, 14.0) << QPointF(18.2, 17.0);
+        painter.drawPolygon(tip);
+    }
+
+    return pixmap;
+}
+
+class PowerMenu final : public QWidget
+{
+public:
+    explicit PowerMenu(QWidget *anchor)
+        : QWidget(nullptr)
+        , anchor_(anchor)
+    {
+        setWindowFlags(
+            Qt::Popup |
+            Qt::FramelessWindowHint |
+            Qt::NoDropShadowWindowHint |
+            Qt::WindowStaysOnTopHint);
+        setAttribute(Qt::WA_DeleteOnClose);
+        setMouseTracking(true);
+        setCursor(Qt::PointingHandCursor);
+        setFixedWidth(220);
+
+        auto *layout = new QVBoxLayout(this);
+        layout->setContentsMargins(8, 8, 8, 8);
+        layout->setSpacing(4);
+
+        layout->addWidget(makeRow(
+            QStringLiteral("logout"),
+            QStringLiteral("Encerrar sessão"),
+            QStringLiteral("Sair do Eden")));
+        layout->addWidget(makeRow(
+            QStringLiteral("reboot"),
+            QStringLiteral("Reiniciar"),
+            QStringLiteral("Reinicia o computador")));
+        layout->addWidget(makeRow(
+            QStringLiteral("shutdown"),
+            QStringLiteral("Desligar"),
+            QStringLiteral("Desliga o computador")));
+
+        QPainterPath path;
+        path.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 14, 14);
+        // Mask applied after show/adjust in open().
+    }
+
+    void open()
+    {
+        adjustSize();
+        QPainterPath path;
+        path.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 14, 14);
+        setMask(QRegion(path.toFillPolygon().toPolygon()));
+
+        QRect screen(0, 0, 1280, 800);
+
+        if (anchor_ != nullptr && anchor_->screen() != nullptr) {
+            screen = anchor_->screen()->geometry();
+        }
+
+        const QPoint bottomRight =
+            anchor_->mapToGlobal(QPoint(anchor_->width(), anchor_->height()));
+        int x = bottomRight.x() - width();
+        int y = bottomRight.y() + 6;
+        x = qBound(screen.left() + 8, x, screen.right() - width() - 8);
+
+        if (y + height() > screen.bottom() - 8) {
+            y = bottomRight.y() - height() - 6;
+        }
+
+        move(x, y);
+        show();
+        raise();
+    }
+
+    std::function<void(const QString &)> onChosen;
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(QColor(QStringLiteral("#D2D2D7")), 1));
+        painter.setBrush(QColor(QStringLiteral("#F5F5F7")));
+        painter.drawRoundedRect(rect().adjusted(0, 0, -1, -1), 14, 14);
+    }
+
+private:
+    QWidget *makeRow(const QString &id, const QString &title, const QString &subtitle)
+    {
+        auto *button = new QPushButton(this);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setFlat(true);
+        button->setMinimumHeight(52);
+        button->setStyleSheet(QStringLiteral(
+            "QPushButton {"
+            "  background: transparent; border: none; border-radius: 10px; text-align: left;"
+            "}"
+            "QPushButton:hover { background: rgba(0,0,0,0.06); }"));
+
+        auto *row = new QHBoxLayout(button);
+        row->setContentsMargins(8, 6, 10, 6);
+        row->setSpacing(10);
+
+        auto *icon = new QLabel(button);
+        icon->setFixedSize(28, 28);
+        icon->setPixmap(powerMenuGlyph(id));
+        icon->setAttribute(Qt::WA_TransparentForMouseEvents);
+        row->addWidget(icon);
+
+        auto *text = new QVBoxLayout;
+        text->setContentsMargins(0, 0, 0, 0);
+        text->setSpacing(1);
+
+        auto *name = new QLabel(title, button);
+        QFont nameFont = name->font();
+        nameFont.setPointSize(13);
+        nameFont.setWeight(QFont::DemiBold);
+        name->setFont(nameFont);
+        name->setStyleSheet(
+            id == QLatin1String("shutdown")
+                ? QStringLiteral("color: #FF3B30; background: transparent;")
+                : QStringLiteral("color: #1C1C1E; background: transparent;"));
+        name->setAttribute(Qt::WA_TransparentForMouseEvents);
+
+        auto *detail = new QLabel(subtitle, button);
+        detail->setStyleSheet(QStringLiteral("color: #6E6E73; background: transparent; font-size: 11px;"));
+        detail->setAttribute(Qt::WA_TransparentForMouseEvents);
+
+        text->addWidget(name);
+        text->addWidget(detail);
+        row->addLayout(text, 1);
+
+        connect(button, &QPushButton::clicked, this, [this, id]() {
+            choice_ = id;
+            close();
+
+            if (onChosen) {
+                onChosen(id);
+            }
+        });
+
+        return button;
+    }
+
+    QWidget *anchor_ = nullptr;
+    QString choice_;
+};
 
 QPixmap networkIcon()
 {
@@ -1790,73 +1986,53 @@ void StatusBar::openGitLogin()
 
 void StatusBar::openPowerMenu()
 {
-    QMenu menu(this);
-    menu.setStyleSheet(QStringLiteral(R"(
-        QMenu {
-            background: #FFFFFF;
-            color: #1C1C1E;
-            border: 1px solid #D2D2D7;
-            border-radius: 10px;
-            padding: 6px;
-        }
-        QMenu::item {
-            background: transparent;
-            color: #1C1C1E;
-            padding: 8px 18px;
-            border-radius: 6px;
-        }
-        QMenu::item:selected {
-            background: #E8E8ED;
-        }
-    )"));
+    auto *menu = new PowerMenu(powerButton_);
+    menu->onChosen = [this](const QString &id) {
+        QTimer::singleShot(0, this, [this, id]() {
+            if (id == QLatin1String("logout")) {
+                if (confirmPower(
+                        QStringLiteral("Encerrar sessão"),
+                        QStringLiteral("Sair desta sessão agora?"))) {
+                    endLoginSession();
+                }
 
-    QAction *logout = menu.addAction(QStringLiteral("Encerrar sessão"));
-    QAction *reboot = menu.addAction(QStringLiteral("Reiniciar"));
-    QAction *shutdown = menu.addAction(QStringLiteral("Desligar"));
-    const QPoint origin = powerButton_->mapToGlobal(QPoint(0, powerButton_->height() + 6));
-    QAction *chosen = menu.exec(QPoint(origin.x() - menu.sizeHint().width() + powerButton_->width(), origin.y()));
+                return;
+            }
 
-    if (chosen == logout) {
-        if (confirmPower(
-                QStringLiteral("Encerrar sessão"),
-                QStringLiteral("Sair desta sessão agora?"))) {
-            endLoginSession();
-        }
+            if (id == QLatin1String("reboot")) {
+                if (!confirmPower(
+                        QStringLiteral("Reiniciar"),
+                        QStringLiteral("Reiniciar o computador agora?"))) {
+                    return;
+                }
 
-        return;
-    }
+                if (!rebootMachine()) {
+                    QMessageBox::warning(
+                        nullptr,
+                        QStringLiteral("Reiniciar"),
+                        QStringLiteral("Não consegui reiniciar o computador."));
+                }
 
-    if (chosen == reboot) {
-        if (!confirmPower(
-                QStringLiteral("Reiniciar"),
-                QStringLiteral("Reiniciar o computador agora?"))) {
-            return;
-        }
+                return;
+            }
 
-        if (!rebootMachine()) {
-            QMessageBox::warning(
-                nullptr,
-                QStringLiteral("Reiniciar"),
-                QStringLiteral("Não consegui reiniciar o computador."));
-        }
+            if (id == QLatin1String("shutdown")) {
+                if (!confirmPower(
+                        QStringLiteral("Desligar"),
+                        QStringLiteral("Desligar o computador agora?"))) {
+                    return;
+                }
 
-        return;
-    }
-
-    if (chosen == shutdown) {
-        if (!confirmPower(
-                QStringLiteral("Desligar"),
-                QStringLiteral("Desligar o computador agora?"))) {
-            return;
-        }
-
-        if (!powerOffMachine()) {
-            QMessageBox::warning(
-                nullptr,
-                QStringLiteral("Desligar"),
-                QStringLiteral("Não consegui desligar o computador."));
-        }
-    }
+                if (!powerOffMachine()) {
+                    QMessageBox::warning(
+                        nullptr,
+                        QStringLiteral("Desligar"),
+                        QStringLiteral("Não consegui desligar o computador."));
+                }
+            }
+        });
+    };
+    menu->open();
 }
 
 void StatusBar::openNetworkMenu()

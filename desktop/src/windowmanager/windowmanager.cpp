@@ -1391,6 +1391,27 @@ bool WindowManager::clientAcceptsClose(xcb_window_t client)
     return clientSupportsProtocol(client, wmDeleteWindow_);
 }
 
+void WindowManager::raiseFrame(ManagedWindow& window)
+{
+    if (!isConnected() || window.frame == XCB_WINDOW_NONE) {
+        return;
+    }
+
+    const uint32_t top[] = {XCB_STACK_MODE_ABOVE};
+    xcb_configure_window(
+        connection_,
+        window.frame,
+        XCB_CONFIG_WINDOW_STACK_MODE,
+        top);
+}
+
+bool WindowManager::allowClientRestack(const ManagedWindow& window) const
+{
+    // Only the focused window may raise itself. Otherwise a maximized app that
+    // loses focus can XRaiseWindow and cover the newly activated one.
+    return window.frame != XCB_WINDOW_NONE && window.frame == focusedFrame_;
+}
+
 void WindowManager::focusWindow(ManagedWindow& window, xcb_timestamp_t time)
 {
     if (window.minimized) {
@@ -1401,13 +1422,10 @@ void WindowManager::focusWindow(ManagedWindow& window, xcb_timestamp_t time)
     const xcb_window_t previous = focusedFrame_;
     const bool changed = previous != window.frame;
 
-    const uint32_t stackMode[] = {XCB_STACK_MODE_ABOVE};
-
-    xcb_configure_window(
-        connection_,
-        window.frame,
-        XCB_CONFIG_WINDOW_STACK_MODE,
-        stackMode);
+    // Mark focus before raise so allowClientRestack accepts this window's own
+    // follow-up ConfigureRequests, and rejects the previous top window's.
+    focusedFrame_ = window.frame;
+    raiseFrame(window);
 
     if (window.acceptsInput) {
         xcb_set_input_focus(
@@ -1434,7 +1452,6 @@ void WindowManager::focusWindow(ManagedWindow& window, xcb_timestamp_t time)
             reinterpret_cast<const char*>(&message));
     }
 
-    focusedFrame_ = window.frame;
     rememberFocus(window.client);
 
     if (changed) {

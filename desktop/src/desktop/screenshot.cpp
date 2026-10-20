@@ -428,6 +428,20 @@ void ScreenshotService::saveShot(const QPixmap &shot)
     showToast(QStringLiteral("Print salvo em Imagens/Screenshots"));
 }
 
+void ScreenshotService::copyShot(const QPixmap &shot)
+{
+    if (shot.isNull()) {
+        showToast(QStringLiteral("Falha ao capturar a tela."));
+        return;
+    }
+
+    if (QClipboard *clipboard = QGuiApplication::clipboard()) {
+        clipboard->setPixmap(shot);
+    }
+
+    showToast(QStringLiteral("Captura copiada — Ctrl+V no desktop para salvar"));
+}
+
 void ScreenshotService::captureFull()
 {
     const QPixmap shot = grabVirtualDesktop();
@@ -448,7 +462,7 @@ void ScreenshotService::captureRegion()
         source,
         bounds,
         [this](const QPixmap &shot) {
-            saveShot(shot);
+            copyShot(shot);
         });
     overlay->show();
     overlay->raise();

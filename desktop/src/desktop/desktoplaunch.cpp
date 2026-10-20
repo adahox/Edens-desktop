@@ -464,6 +464,84 @@ bool launchDesktopFile(const QString &desktopPath, qint64 *pid)
         pid);
 }
 
+quint32 currentDesktopIndex(xcb_connection_t *connection, xcb_window_t root)
+{
+    const xcb_atom_t atom = intern(connection, "_NET_CURRENT_DESKTOP");
+
+    if (atom == XCB_ATOM_NONE || root == XCB_WINDOW_NONE) {
+        return 0;
+    }
+
+    const auto cookie = xcb_get_property(
+        connection,
+        0,
+        root,
+        atom,
+        XCB_ATOM_CARDINAL,
+        0,
+        1);
+    xcb_get_property_reply_t *reply =
+        xcb_get_property_reply(connection, cookie, nullptr);
+
+    if (reply == nullptr || xcb_get_property_value_length(reply) < 4) {
+        std::free(reply);
+        return 0;
+    }
+
+    const auto desktop =
+        *static_cast<const uint32_t *>(xcb_get_property_value(reply));
+    std::free(reply);
+    return desktop;
+}
+
+void readWindowDesktop(
+    xcb_connection_t *connection,
+    xcb_window_t window,
+    xcb_atom_t netWmDesktop,
+    ClientWindow *client)
+{
+    if (connection == nullptr ||
+        client == nullptr ||
+        netWmDesktop == XCB_ATOM_NONE) {
+        return;
+    }
+
+    const auto cookie = xcb_get_property(
+        connection,
+        0,
+        window,
+        netWmDesktop,
+        XCB_ATOM_CARDINAL,
+        0,
+        1);
+    xcb_get_property_reply_t *reply =
+        xcb_get_property_reply(connection, cookie, nullptr);
+
+    if (reply == nullptr || xcb_get_property_value_length(reply) < 4) {
+        std::free(reply);
+        return;
+    }
+
+    const auto desktop =
+        *static_cast<const uint32_t *>(xcb_get_property_value(reply));
+    std::free(reply);
+
+    // 0xFFFFFFFF = sticky / all desktops (EWMH).
+    if (desktop == 0xFFFFFFFFu) {
+        client->sticky = true;
+        client->desktop = 0;
+        return;
+    }
+
+    client->sticky = false;
+    client->desktop = desktop;
+}
+
+bool visibleOnCurrentDesktop(const ClientWindow &client, quint32 currentDesktop)
+{
+    return client.sticky || client.desktop == currentDesktop;
+}
+
 QVector<ClientWindow> listClientWindows()
 {
     QVector<ClientWindow> clients;
@@ -479,6 +557,7 @@ QVector<ClientWindow> listClientWindows()
     const xcb_atom_t netWmName = intern(connection, "_NET_WM_NAME");
     const xcb_atom_t netWmState = intern(connection, "_NET_WM_STATE");
     const xcb_atom_t netWmStateHidden = intern(connection, "_NET_WM_STATE_HIDDEN");
+    const xcb_atom_t netWmDesktop = intern(connection, "_NET_WM_DESKTOP");
 
     if (root == XCB_WINDOW_NONE || netClientList == XCB_ATOM_NONE) {
         return clients;
@@ -540,6 +619,8 @@ QVector<ClientWindow> listClientWindows()
 
             std::free(pidReply);
         }
+
+        readWindowDesktop(connection, client.window, netWmDesktop, &client);
 
         client.hidden = atomListContains(
             connection,
@@ -650,9 +731,17 @@ QVector<ClientWindow> matchingWindows(
 {
     QVector<ClientWindow> matches;
     QVector<quint32> seen;
+    xcb_connection_t *connection = x11();
+    const quint32 currentDesktop = connection == nullptr
+        ? 0
+        : currentDesktopIndex(connection, rootWindow(connection));
 
     for (const ClientWindow &client : listClientWindows()) {
         if (!matchesHints(client, classHints, pids, titleHints)) {
+            continue;
+        }
+
+        if (!visibleOnCurrentDesktop(client, currentDesktop)) {
             continue;
         }
 
@@ -847,9 +936,17 @@ bool closeMatching(
     const QStringList &titleHints)
 {
     bool closed = false;
+    xcb_connection_t *connection = x11();
+    const quint32 currentDesktop = connection == nullptr
+        ? 0
+        : currentDesktopIndex(connection, rootWindow(connection));
 
     for (const ClientWindow &client : listClientWindows()) {
         if (!matchesHints(client, classHints, pids, titleHints)) {
+            continue;
+        }
+
+        if (!visibleOnCurrentDesktop(client, currentDesktop)) {
             continue;
         }
 

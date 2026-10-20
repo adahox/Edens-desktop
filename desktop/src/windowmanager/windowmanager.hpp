@@ -141,7 +141,9 @@ private:
     void forgetFocus(xcb_window_t client);
     void noteWindowRemoved(xcb_window_t client, xcb_window_t frame);
     void raiseTransients(xcb_window_t client);
+    void raiseFrame(ManagedWindow& window);
     void raisePanel();
+    [[nodiscard]] bool allowClientRestack(const ManagedWindow& window) const;
     void drawPanel();
     void handlePanelPress(int16_t x);
     void applyNetWmState(ManagedWindow& window, uint32_t action, xcb_atom_t atom);

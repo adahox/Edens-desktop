@@ -15,6 +15,8 @@ struct ClientWindow
 {
     quint32 window = 0;
     qint64 pid = 0;
+    quint32 desktop = 0;
+    bool sticky = false;
     QString instance;
     QString className;
     QString title;

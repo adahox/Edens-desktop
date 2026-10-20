@@ -34,8 +34,12 @@
 #include <QShowEvent>
 #include <QTextStream>
 #include <QTimer>
+#include <QLineEdit>
+#include <QShortcut>
 #include <QApplication>
+#include <QClipboard>
 #include <QGuiApplication>
+#include <QMimeData>
 #include <QScreen>
 #include <QStyle>
 #include <QStyledItemDelegate>
@@ -44,8 +48,10 @@
 #include <QImage>
 #include <QMouseEvent>
 #include <QRadialGradient>
+#include <QRegularExpression>
 #include <QHash>
 #include <QSet>
+#include <QKeyEvent>
 #include <algorithm>
 #include <cmath>
 #include "filemanager/filemanagerwindow.hpp"
@@ -62,12 +68,14 @@ class DesktopIconProvider final : public QFileIconProvider
 public:
     DesktopIconProvider()
     {
+        ensureIconTheme();
+
         const QStyle *style = QApplication::style();
-        directoryIcon_ = QIcon::fromTheme(
-            QStringLiteral("folder"),
+        directoryIcon_ = themeIcon(
+            {QStringLiteral("folder"), QStringLiteral("inode-directory")},
             style->standardIcon(QStyle::SP_DirIcon));
-        fileIcon_ = QIcon::fromTheme(
-            QStringLiteral("text-x-generic"),
+        fileIcon_ = themeIcon(
+            {QStringLiteral("text-x-generic"), QStringLiteral("text-plain")},
             style->standardIcon(QStyle::SP_FileIcon));
     }
 
@@ -77,7 +85,9 @@ public:
             return false;
         }
 
-        const QMimeType mime = mimeDb_.mimeTypeForFile(info);
+        const QMimeType mime = mimeDb_.mimeTypeForFile(
+            info,
+            QMimeDatabase::MatchExtension);
         if (mime.name().startsWith(QLatin1String("image/"))) {
             return true;
         }
@@ -96,7 +106,9 @@ public:
             return directoryIcon_;
         }
 
-        if (info.suffix().compare(QLatin1String("desktop"), Qt::CaseInsensitive) == 0) {
+        const QString suffix = info.suffix().toLower();
+
+        if (suffix == QLatin1String("desktop")) {
             const QIcon desktopIcon =
                 EdenDesktop::iconFor(EdenDesktop::fields(info.absoluteFilePath()));
 
@@ -128,38 +140,263 @@ public:
             }
         }
 
-        const QMimeType mime = mimeDb_.mimeTypeForFile(info);
-        const QStringList themeNames = {
-            mime.iconName(),
-            mime.genericIconName(),
+        const QString typeKey = suffix.isEmpty()
+            ? QStringLiteral("file")
+            : suffix;
+
+        if (typeIconCache_.contains(typeKey)) {
+            return typeIconCache_.value(typeKey);
+        }
+
+        const QMimeType mime = mimeDb_.mimeTypeForFile(
+            info,
+            QMimeDatabase::MatchExtension);
+        const QIcon resolved = themeIcon(iconCandidates(suffix, mime), QIcon());
+
+        if (!resolved.isNull()) {
+            typeIconCache_.insert(typeKey, resolved);
+            return resolved;
+        }
+
+        const QIcon badge = badgeIcon(suffix, mime);
+        typeIconCache_.insert(typeKey, badge);
+        return badge;
+    }
+
+private:
+    static void ensureIconTheme()
+    {
+        if (!QIcon::themeName().isEmpty()) {
+            return;
+        }
+
+        const QStringList preferred = {
+            QStringLiteral("Papirus"),
+            QStringLiteral("Yaru"),
+            QStringLiteral("Adwaita"),
+            QStringLiteral("Humanity"),
+            QStringLiteral("hicolor"),
         };
 
-        for (const QString &name : themeNames) {
+        for (const QString &theme : preferred) {
+            if (QDir(QStringLiteral("/usr/share/icons/") + theme).exists()) {
+                QIcon::setThemeName(theme);
+                return;
+            }
+        }
+    }
+
+    [[nodiscard]] static QStringList iconCandidates(
+        const QString &suffix,
+        const QMimeType &mime)
+    {
+        QStringList names;
+
+        // Extension-first: freedesktop MIME often maps .conf and .txt both to text/plain.
+        static const QHash<QString, QStringList> byExtension = {
+            {QStringLiteral("txt"), {QStringLiteral("text-plain"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("text"), {QStringLiteral("text-plain"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("log"), {QStringLiteral("text-x-log"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("md"), {QStringLiteral("text-markdown"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("markdown"), {QStringLiteral("text-markdown"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("conf"), {QStringLiteral("text-x-generic-template"), QStringLiteral("preferences-system"), QStringLiteral("application-x-wine-extension-ini")}},
+            {QStringLiteral("cfg"), {QStringLiteral("text-x-generic-template"), QStringLiteral("preferences-system")}},
+            {QStringLiteral("ini"), {QStringLiteral("text-x-generic-template"), QStringLiteral("preferences-system")}},
+            {QStringLiteral("toml"), {QStringLiteral("text-x-generic-template"), QStringLiteral("text-x-cmake")}},
+            {QStringLiteral("yaml"), {QStringLiteral("text-x-generic-template"), QStringLiteral("application-x-yaml")}},
+            {QStringLiteral("yml"), {QStringLiteral("text-x-generic-template"), QStringLiteral("application-x-yaml")}},
+            {QStringLiteral("json"), {QStringLiteral("application-json"), QStringLiteral("text-x-script")}},
+            {QStringLiteral("xml"), {QStringLiteral("text-xml"), QStringLiteral("application-xml")}},
+            {QStringLiteral("csv"), {QStringLiteral("text-csv"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("pdf"), {QStringLiteral("application-pdf"), QStringLiteral("x-office-document")}},
+            {QStringLiteral("doc"), {QStringLiteral("x-office-document"), QStringLiteral("application-msword")}},
+            {QStringLiteral("docx"), {QStringLiteral("x-office-document"), QStringLiteral("application-vnd.openxmlformats-officedocument.wordprocessingml.document")}},
+            {QStringLiteral("xls"), {QStringLiteral("x-office-spreadsheet"), QStringLiteral("application-vnd.ms-excel")}},
+            {QStringLiteral("xlsx"), {QStringLiteral("x-office-spreadsheet")}},
+            {QStringLiteral("ppt"), {QStringLiteral("x-office-presentation")}},
+            {QStringLiteral("pptx"), {QStringLiteral("x-office-presentation")}},
+            {QStringLiteral("zip"), {QStringLiteral("application-zip"), QStringLiteral("package-x-generic")}},
+            {QStringLiteral("gz"), {QStringLiteral("application-x-gz"), QStringLiteral("package-x-generic")}},
+            {QStringLiteral("tar"), {QStringLiteral("application-x-tar"), QStringLiteral("package-x-generic")}},
+            {QStringLiteral("7z"), {QStringLiteral("application-x-7z-compressed"), QStringLiteral("package-x-generic")}},
+            {QStringLiteral("rar"), {QStringLiteral("application-x-rar"), QStringLiteral("package-x-generic")}},
+            {QStringLiteral("deb"), {QStringLiteral("application-vnd.debian.binary-package"), QStringLiteral("package-x-generic")}},
+            {QStringLiteral("sh"), {QStringLiteral("application-x-shellscript"), QStringLiteral("text-x-script")}},
+            {QStringLiteral("bash"), {QStringLiteral("application-x-shellscript"), QStringLiteral("text-x-script")}},
+            {QStringLiteral("py"), {QStringLiteral("text-x-python"), QStringLiteral("text-x-script")}},
+            {QStringLiteral("js"), {QStringLiteral("text-javascript"), QStringLiteral("text-x-script")}},
+            {QStringLiteral("ts"), {QStringLiteral("text-x-typescript"), QStringLiteral("text-x-script")}},
+            {QStringLiteral("c"), {QStringLiteral("text-x-csrc"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("cpp"), {QStringLiteral("text-x-c++src"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("h"), {QStringLiteral("text-x-chdr"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("hpp"), {QStringLiteral("text-x-c++hdr"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("rs"), {QStringLiteral("text-rust"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("go"), {QStringLiteral("text-x-go"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("html"), {QStringLiteral("text-html"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("css"), {QStringLiteral("text-css"), QStringLiteral("text-x-generic")}},
+            {QStringLiteral("mp3"), {QStringLiteral("audio-x-generic"), QStringLiteral("audio-mpeg")}},
+            {QStringLiteral("wav"), {QStringLiteral("audio-x-generic"), QStringLiteral("audio-x-wav")}},
+            {QStringLiteral("mp4"), {QStringLiteral("video-x-generic"), QStringLiteral("video-mp4")}},
+            {QStringLiteral("mkv"), {QStringLiteral("video-x-generic"), QStringLiteral("video-x-matroska")}},
+            {QStringLiteral("avi"), {QStringLiteral("video-x-generic")}},
+        };
+
+        names.append(byExtension.value(suffix));
+
+        if (!mime.iconName().isEmpty()) {
+            names.push_back(mime.iconName());
+        }
+
+        if (!mime.genericIconName().isEmpty()) {
+            names.push_back(mime.genericIconName());
+        }
+
+        if (!mime.name().isEmpty()) {
+            names.push_back(QString(mime.name()).replace(QLatin1Char('/'), QLatin1Char('-')));
+        }
+
+        for (const QString &parent : mime.parentMimeTypes()) {
+            names.push_back(QString(parent).replace(QLatin1Char('/'), QLatin1Char('-')));
+        }
+
+        names.removeDuplicates();
+        return names;
+    }
+
+    [[nodiscard]] static QIcon themeIcon(const QStringList &names, const QIcon &fallback)
+    {
+        for (const QString &name : names) {
             if (name.isEmpty()) {
                 continue;
             }
 
-            const QIcon themed = QIcon::fromTheme(name);
+            const QIcon icon = QIcon::fromTheme(name);
 
-            if (!themed.isNull()) {
-                return themed;
+            if (!icon.isNull()) {
+                return icon;
             }
         }
 
-        const QIcon systemIcon = QFileIconProvider::icon(info);
-
-        if (!systemIcon.isNull()) {
-            return systemIcon;
-        }
-
-        return fileIcon_;
+        return fallback;
     }
 
-private:
+    [[nodiscard]] static QColor badgeColor(const QString &suffix)
+    {
+        if (suffix == QLatin1String("conf") ||
+            suffix == QLatin1String("cfg") ||
+            suffix == QLatin1String("ini") ||
+            suffix == QLatin1String("toml") ||
+            suffix == QLatin1String("yaml") ||
+            suffix == QLatin1String("yml")) {
+            return QColor(0xE0, 0x8A, 0x2E);
+        }
+
+        if (suffix == QLatin1String("txt") ||
+            suffix == QLatin1String("text") ||
+            suffix == QLatin1String("log") ||
+            suffix == QLatin1String("md")) {
+            return QColor(0x3B, 0x82, 0xF6);
+        }
+
+        if (suffix == QLatin1String("pdf")) {
+            return QColor(0xDC, 0x26, 0x26);
+        }
+
+        if (suffix == QLatin1String("zip") ||
+            suffix == QLatin1String("gz") ||
+            suffix == QLatin1String("tar") ||
+            suffix == QLatin1String("7z") ||
+            suffix == QLatin1String("rar") ||
+            suffix == QLatin1String("deb")) {
+            return QColor(0xCA, 0x8A, 0x04);
+        }
+
+        if (suffix == QLatin1String("sh") ||
+            suffix == QLatin1String("py") ||
+            suffix == QLatin1String("js") ||
+            suffix == QLatin1String("ts") ||
+            suffix == QLatin1String("c") ||
+            suffix == QLatin1String("cpp") ||
+            suffix == QLatin1String("h") ||
+            suffix == QLatin1String("hpp") ||
+            suffix == QLatin1String("rs") ||
+            suffix == QLatin1String("go")) {
+            return QColor(0x16, 0xA3, 0x4A);
+        }
+
+        if (suffix == QLatin1String("mp3") ||
+            suffix == QLatin1String("wav") ||
+            suffix == QLatin1String("flac")) {
+            return QColor(0xA8, 0x55, 0xF7);
+        }
+
+        if (suffix == QLatin1String("mp4") ||
+            suffix == QLatin1String("mkv") ||
+            suffix == QLatin1String("avi")) {
+            return QColor(0xDB, 0x27, 0x77);
+        }
+
+        return QColor(0x64, 0x74, 0x8B);
+    }
+
+    [[nodiscard]] static QIcon badgeIcon(const QString &suffix, const QMimeType &mime)
+    {
+        Q_UNUSED(mime);
+
+        QPixmap canvas(kDesktopIconSize, kDesktopIconSize);
+        canvas.fill(Qt::transparent);
+
+        QPainter painter(&canvas);
+        painter.setRenderHint(QPainter::Antialiasing);
+
+        const QColor accent = badgeColor(suffix);
+        const QRectF page(10, 6, 40, 50);
+        QPainterPath sheet;
+        sheet.moveTo(page.left(), page.top());
+        sheet.lineTo(page.right() - 10, page.top());
+        sheet.lineTo(page.right(), page.top() + 10);
+        sheet.lineTo(page.right(), page.bottom());
+        sheet.lineTo(page.left(), page.bottom());
+        sheet.closeSubpath();
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0xF8, 0xFA, 0xFC));
+        painter.drawPath(sheet);
+        painter.setBrush(QColor(0xE2, 0xE8, 0xF0));
+        QPolygonF fold;
+        fold << QPointF(page.right() - 10, page.top())
+             << QPointF(page.right(), page.top() + 10)
+             << QPointF(page.right() - 10, page.top() + 10);
+        painter.drawPolygon(fold);
+
+        painter.setPen(QPen(QColor(0xCB, 0xD5, 0xE1), 1.2));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(sheet);
+
+        const QString label = suffix.isEmpty()
+            ? QStringLiteral("FILE")
+            : suffix.left(4).toUpper();
+        const QRectF badge(8, 34, 48, 18);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(accent);
+        painter.drawRoundedRect(badge, 5, 5);
+
+        QFont font = painter.font();
+        font.setBold(true);
+        font.setPixelSize(label.size() >= 4 ? 9 : 10);
+        painter.setFont(font);
+        painter.setPen(Qt::white);
+        painter.drawText(badge, Qt::AlignCenter, label);
+        painter.end();
+
+        return QIcon(canvas);
+    }
+
     QIcon directoryIcon_;
     QIcon fileIcon_;
     mutable QMimeDatabase mimeDb_;
     mutable QHash<QString, QIcon> thumbnailCache_;
+    mutable QHash<QString, QIcon> typeIconCache_;
 };
 
 class DesktopListView final : public QListView
@@ -167,16 +404,110 @@ class DesktopListView final : public QListView
 public:
     using QListView::QListView;
 
+    void clearPlacements()
+    {
+        placements_.clear();
+    }
+
     void placeItem(const QPoint &position, const QModelIndex &index)
     {
+        if (!index.isValid()) {
+            return;
+        }
+
+        const QString key = placementKey(index);
+
+        if (!key.isEmpty()) {
+            placements_.insert(key, position);
+        }
+
         setPositionForIndex(position, index);
     }
+
+    void capturePlacementsFromView()
+    {
+        if (model() == nullptr) {
+            return;
+        }
+
+        for (int row = 0; row < model()->rowCount(); ++row) {
+            const QModelIndex index = model()->index(row, 0);
+            const QString key = placementKey(index);
+
+            if (key.isEmpty()) {
+                continue;
+            }
+
+            placements_.insert(key, visualRect(index).topLeft());
+        }
+    }
+
+    void reapplyPlacements()
+    {
+        if (model() == nullptr || placements_.isEmpty()) {
+            return;
+        }
+
+        for (int row = 0; row < model()->rowCount(); ++row) {
+            const QModelIndex index = model()->index(row, 0);
+            const QString key = placementKey(index);
+
+            if (key.isEmpty() || !placements_.contains(key)) {
+                continue;
+            }
+
+            setPositionForIndex(placements_.value(key), index);
+        }
+    }
+
+protected:
+    void doItemsLayout() override
+    {
+        // QListView's IconMode layout forces a left-to-right grid and wipes
+        // free positions after model/resizes. Keep geometries, then restore.
+        QListView::doItemsLayout();
+        reapplyPlacements();
+    }
+
+private:
+    [[nodiscard]] static QString placementKey(const QModelIndex &index)
+    {
+        const QString path = index.data(Qt::UserRole).toString();
+
+        if (path.isEmpty()) {
+            return {};
+        }
+
+        return QFileInfo(path).fileName();
+    }
+
+    QHash<QString, QPoint> placements_;
 };
 
 class DesktopItemDelegate final : public QStyledItemDelegate
 {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
+
+    [[nodiscard]] static QRect iconRectFor(const QStyleOptionViewItem &option)
+    {
+        const QSize iconSize = option.decorationSize;
+        return {
+            option.rect.x() + (option.rect.width() - iconSize.width()) / 2,
+            option.rect.y() + 6,
+            iconSize.width(),
+            iconSize.height()};
+    }
+
+    [[nodiscard]] static QRect textRectFor(const QStyleOptionViewItem &option)
+    {
+        const QRect iconRect = iconRectFor(option);
+        return {
+            option.rect.x() + 4,
+            iconRect.bottom() + 4,
+            option.rect.width() - 8,
+            std::max(22, option.rect.bottom() - iconRect.bottom() - 4)};
+    }
 
     void paint(
         QPainter *painter,
@@ -200,19 +531,13 @@ public:
             painter->drawRoundedRect(itemOption.rect.adjusted(2, 2, -2, -2), 10, 10);
         }
 
-        const QSize iconSize = itemOption.decorationSize;
-        const QRect iconRect(
-            itemOption.rect.x() + (itemOption.rect.width() - iconSize.width()) / 2,
-            itemOption.rect.y() + 6,
-            iconSize.width(),
-            iconSize.height());
-
+        const QRect iconRect = iconRectFor(itemOption);
         const bool isImage = index.data(Qt::UserRole + 1).toBool();
-        const QPixmap pixmap = itemOption.icon.pixmap(iconSize);
+        const QPixmap pixmap = itemOption.icon.pixmap(itemOption.decorationSize);
 
         if (isImage && !pixmap.isNull()) {
             const QPixmap fitted = pixmap.scaled(
-                iconSize,
+                itemOption.decorationSize,
                 Qt::KeepAspectRatio,
                 Qt::SmoothTransformation);
             const QRect drawRect(
@@ -234,24 +559,75 @@ public:
             itemOption.icon.paint(painter, iconRect);
         }
 
-        const QRect textRect(
-            itemOption.rect.x() + 4,
-            iconRect.bottom() + 4,
-            itemOption.rect.width() - 8,
-            itemOption.rect.bottom() - iconRect.bottom() - 6);
-
-        painter->setPen(QColor(0, 0, 0, 210));
-        painter->drawText(
-            textRect.translated(1, 1),
-            Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
-            itemOption.text);
-        painter->setPen(Qt::white);
-        painter->drawText(
-            textRect,
-            Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
-            itemOption.text);
+        if ((itemOption.state & QStyle::State_Editing) == 0) {
+            const QRect textRect = textRectFor(itemOption);
+            painter->setPen(QColor(0, 0, 0, 210));
+            painter->drawText(
+                textRect.translated(1, 1),
+                Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
+                itemOption.text);
+            painter->setPen(Qt::white);
+            painter->drawText(
+                textRect,
+                Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
+                itemOption.text);
+        }
 
         painter->restore();
+    }
+
+    QWidget *createEditor(
+        QWidget *parent,
+        const QStyleOptionViewItem &option,
+        const QModelIndex &index) const override
+    {
+        Q_UNUSED(option);
+        Q_UNUSED(index);
+
+        auto *editor = new QLineEdit(parent);
+        editor->setAlignment(Qt::AlignCenter);
+        editor->setFrame(true);
+        editor->setStyleSheet(QStringLiteral(
+            "QLineEdit {"
+            "  background: #F5F5F7;"
+            "  color: #1C1C1E;"
+            "  border: 1px solid #007AFF;"
+            "  border-radius: 6px;"
+            "  padding: 2px 4px;"
+            "  selection-background-color: #007AFF;"
+            "  selection-color: white;"
+            "}"));
+        return editor;
+    }
+
+    void updateEditorGeometry(
+        QWidget *editor,
+        const QStyleOptionViewItem &option,
+        const QModelIndex &index) const override
+    {
+        Q_UNUSED(index);
+        QStyleOptionViewItem itemOption = option;
+        initStyleOption(&itemOption, index);
+        const QRect textRect = textRectFor(itemOption);
+        editor->setGeometry(textRect.adjusted(-2, -1, 2, 4));
+    }
+
+    void setEditorData(QWidget *editor, const QModelIndex &index) const override
+    {
+        if (auto *line = qobject_cast<QLineEdit *>(editor)) {
+            line->setText(index.data(Qt::EditRole).toString());
+            line->selectAll();
+        }
+    }
+
+    void setModelData(
+        QWidget *editor,
+        QAbstractItemModel *model,
+        const QModelIndex &index) const override
+    {
+        if (auto *line = qobject_cast<QLineEdit *>(editor)) {
+            model->setData(index, line->text().trimmed(), Qt::EditRole);
+        }
     }
 };
 
@@ -490,9 +866,11 @@ void DesktopWindow::setupFileArea()
 
     fileView_->setWordWrap(true);
     fileView_->setTextElideMode(Qt::ElideMiddle);
-    fileView_->setEditTriggers(
-        QAbstractItemView::NoEditTriggers
-    );
+    fileView_->setEditTriggers(QAbstractItemView::EditKeyPressed);
+    fileView_->setSelectionMode(QAbstractItemView::SingleSelection);
+    fileView_->setFocusPolicy(Qt::StrongFocus);
+    setFocusPolicy(Qt::StrongFocus);
+    setFocusProxy(fileView_);
 
     fileView_->setContextMenuPolicy(
         Qt::CustomContextMenu
@@ -539,12 +917,50 @@ void DesktopWindow::setupFileArea()
 
     connect(
         fileView_,
+        &QListView::clicked,
+        this,
+        [this](const QModelIndex &index) {
+            if (!index.isValid()) {
+                return;
+            }
+
+            activateWindow();
+            fileView_->setFocus(Qt::MouseFocusReason);
+            fileView_->setCurrentIndex(index);
+        });
+
+    connect(
+        fileView_,
         &QListView::doubleClicked,
         this,
         [this](const QModelIndex &index) {
             openItem(index);
         }
     );
+
+    connect(
+        fileModel_,
+        &QStandardItemModel::itemChanged,
+        this,
+        [this](QStandardItem *item) {
+            if (restoringLayout_ || item == nullptr) {
+                return;
+            }
+
+            renameDesktopItem(item);
+        });
+
+    auto *renameShortcut = new QShortcut(QKeySequence(Qt::Key_F2), this);
+    renameShortcut->setContext(Qt::WindowShortcut);
+    connect(renameShortcut, &QShortcut::activated, this, [this]() {
+        beginRenameSelected();
+    });
+
+    auto *pasteShortcut = new QShortcut(QKeySequence::Paste, this);
+    pasteShortcut->setContext(Qt::WindowShortcut);
+    connect(pasteShortcut, &QShortcut::activated, this, [this]() {
+        pasteClipboardImage();
+    });
 
     connect(
         fileView_,
@@ -563,6 +979,13 @@ void DesktopWindow::setupFileArea()
         saveDesktopLayout();
     });
 
+    revealTimer_ = new QTimer(this);
+    revealTimer_->setSingleShot(true);
+    revealTimer_->setInterval(200);
+    connect(revealTimer_, &QTimer::timeout, this, [this]() {
+        revealDesktopFiles();
+    });
+
     directoryWatcher_ = new QFileSystemWatcher(this);
     directoryWatcher_->addPath(desktopDirectory_);
     connect(
@@ -570,12 +993,13 @@ void DesktopWindow::setupFileArea()
         &QFileSystemWatcher::directoryChanged,
         this,
         [this](const QString &) {
-            revealDesktopFiles();
+            scheduleRevealDesktopFiles();
         }
     );
 
     revealDesktopFiles();
 
+    fileView_->installEventFilter(this);
     fileView_->viewport()->installEventFilter(this);
     fileView_->setGeometry(rect());
     applyWallpaper();
@@ -638,11 +1062,189 @@ void DesktopWindow::scheduleSaveDesktopLayout()
     }
 }
 
+void DesktopWindow::scheduleRevealDesktopFiles()
+{
+    if (revealTimer_ != nullptr) {
+        revealTimer_->start();
+    }
+}
+
+void DesktopWindow::applyIconPositions()
+{
+    if (fileView_ == nullptr) {
+        return;
+    }
+
+    static_cast<DesktopListView *>(fileView_)->reapplyPlacements();
+    fileView_->viewport()->update();
+}
+
+void DesktopWindow::beginRenameSelected()
+{
+    if (fileView_ == nullptr || fileModel_ == nullptr) {
+        return;
+    }
+
+    QModelIndex index = fileView_->currentIndex();
+
+    if (!index.isValid() && !fileView_->selectionModel()->selectedIndexes().isEmpty()) {
+        index = fileView_->selectionModel()->selectedIndexes().constFirst();
+        fileView_->setCurrentIndex(index);
+    }
+
+    if (!index.isValid()) {
+        return;
+    }
+
+    activateWindow();
+    fileView_->setFocus(Qt::ShortcutFocusReason);
+    fileView_->setCurrentIndex(index);
+
+    // Force edit regardless of trigger flags.
+    QMetaObject::invokeMethod(
+        fileView_,
+        [this, index]() {
+            fileView_->edit(index);
+        },
+        Qt::QueuedConnection);
+}
+
+namespace {
+
+bool updateDesktopEntryName(const QString &path, const QString &name)
+{
+    QFile file(path);
+
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return false;
+    }
+
+    QString content = QString::fromUtf8(file.readAll());
+    file.close();
+
+    static const QRegularExpression nameLine(
+        QStringLiteral("(?m)^Name\\s*=.*$"));
+
+    if (nameLine.match(content).hasMatch()) {
+        content.replace(nameLine, QStringLiteral("Name=%1").arg(name));
+    } else {
+        const int desktopEntry = content.indexOf(QStringLiteral("[Desktop Entry]"));
+
+        if (desktopEntry < 0) {
+            return false;
+        }
+
+        const int insertAt = content.indexOf(QLatin1Char('\n'), desktopEntry);
+
+        if (insertAt < 0) {
+            content += QStringLiteral("\nName=%1\n").arg(name);
+        } else {
+            content.insert(insertAt + 1, QStringLiteral("Name=%1\n").arg(name));
+        }
+    }
+
+    QSaveFile out(path);
+
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return false;
+    }
+
+    out.write(content.toUtf8());
+    return out.commit();
+}
+
+}  // namespace
+
+void DesktopWindow::renameDesktopItem(QStandardItem *item)
+{
+    if (item == nullptr || fileView_ == nullptr) {
+        return;
+    }
+
+    const QString path = item->data(RolePath).toString();
+    const QString newLabel = item->text().trimmed();
+    const QFileInfo info(path);
+
+    if (path.isEmpty() || !info.exists() || newLabel.isEmpty()) {
+        restoringLayout_ = true;
+        item->setText(info.fileName());
+        restoringLayout_ = false;
+        return;
+    }
+
+    if (info.suffix().compare(QLatin1String("desktop"), Qt::CaseInsensitive) == 0) {
+        const QHash<QString, QString> fields = EdenDesktop::fields(path);
+        const QString currentName = EdenDesktop::localizedName(fields);
+
+        if (newLabel == currentName || newLabel == info.completeBaseName()) {
+            return;
+        }
+
+        if (!updateDesktopEntryName(path, newLabel)) {
+            restoringLayout_ = true;
+            item->setText(currentName.isEmpty() ? info.completeBaseName() : currentName);
+            restoringLayout_ = false;
+        }
+
+        return;
+    }
+
+    if (newLabel == info.fileName()) {
+        return;
+    }
+
+    const QString target = info.dir().filePath(newLabel);
+
+    if (QFileInfo::exists(target)) {
+        restoringLayout_ = true;
+        item->setText(info.fileName());
+        restoringLayout_ = false;
+        return;
+    }
+
+    // Keep icon position under the new file name.
+    QHash<QString, QPoint> layout = loadDesktopLayout();
+    const QPoint position = layout.value(
+        info.fileName(),
+        fileView_->visualRect(item->index()).topLeft());
+    layout.remove(info.fileName());
+    layout.insert(newLabel, position);
+
+    if (!QFile::rename(path, target)) {
+        restoringLayout_ = true;
+        item->setText(info.fileName());
+        restoringLayout_ = false;
+        return;
+    }
+
+    restoringLayout_ = true;
+    item->setData(target, RolePath);
+    item->setText(newLabel);
+    restoringLayout_ = false;
+
+    QSaveFile file(layoutConfigPath());
+
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream stream(&file);
+        stream << "# Eden desktop icon positions\n";
+
+        for (auto it = layout.cbegin(); it != layout.cend(); ++it) {
+            stream << it.key() << '=' << it.value().x() << ',' << it.value().y()
+                   << '\n';
+        }
+
+        file.commit();
+    }
+}
+
 void DesktopWindow::saveDesktopLayout()
 {
     if (fileModel_ == nullptr || fileView_ == nullptr || restoringLayout_) {
         return;
     }
+
+    auto *desktopView = static_cast<DesktopListView *>(fileView_);
+    desktopView->capturePlacementsFromView();
 
     QSaveFile file(layoutConfigPath());
 
@@ -700,12 +1302,14 @@ void DesktopWindow::revealDesktopFiles()
         return;
     }
 
-    saveDesktopLayout();
-
+    // Never save here — a mid-refresh visualRect dump would overwrite free
+    // positions with QListView's temporary horizontal grid.
     const QHash<QString, QPoint> saved = loadDesktopLayout();
     QHash<QString, QPoint> placed;
+    auto *desktopView = static_cast<DesktopListView *>(fileView_);
 
     restoringLayout_ = true;
+    desktopView->clearPlacements();
     fileModel_->clear();
 
     const QFileInfoList entries = QDir(desktopDirectory_).entryInfoList(
@@ -729,14 +1333,6 @@ void DesktopWindow::revealDesktopFiles()
             }
         }
 
-        auto *item = new QStandardItem(iconProvider_->icon(info), label);
-        item->setData(info.absoluteFilePath(), RolePath);
-        item->setData(typedProvider->isImage(info), RoleIsImage);
-        item->setEditable(false);
-        item->setSizeHint(QSize(kDesktopGridW - 8, kDesktopGridH - 8));
-        fileModel_->appendRow(item);
-
-        const QModelIndex index = item->index();
         QPoint position = saved.value(info.fileName());
 
         if (!saved.contains(info.fileName())) {
@@ -745,17 +1341,38 @@ void DesktopWindow::revealDesktopFiles()
 
         placed.insert(info.fileName(), position);
 
-        static_cast<DesktopListView *>(fileView_)->placeItem(position, index);
+        auto *item = new QStandardItem(iconProvider_->icon(info), label);
+        item->setData(info.absoluteFilePath(), RolePath);
+        item->setData(typedProvider->isImage(info), RoleIsImage);
+        item->setData(position.x(), RolePosX);
+        item->setData(position.y(), RolePosY);
+        item->setEditable(true);
+        item->setSizeHint(QSize(kDesktopGridW - 8, kDesktopGridH - 8));
+        fileModel_->appendRow(item);
+
+        desktopView->placeItem(position, item->index());
     }
 
     restoringLayout_ = false;
-    fileView_->viewport()->update();
+    applyIconPositions();
+    QTimer::singleShot(0, this, [this]() {
+        applyIconPositions();
+    });
+    QTimer::singleShot(50, this, [this]() {
+        applyIconPositions();
+    });
 }
 
 void DesktopWindow::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
-    revealDesktopFiles();
+
+    if (fileModel_ == nullptr || fileModel_->rowCount() == 0) {
+        revealDesktopFiles();
+    } else {
+        applyIconPositions();
+    }
+
     applyWallpaper();
 }
 
@@ -902,6 +1519,7 @@ void DesktopWindow::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     refreshWallpaper();
+    applyIconPositions();
 }
 
 void DesktopWindow::moveEvent(QMoveEvent *event)
@@ -933,14 +1551,46 @@ void DesktopWindow::allowSessionExit()
     sessionExitAllowed_ = true;
 }
 
+void DesktopWindow::keyPressEvent(QKeyEvent *event)
+{
+    if (event != nullptr && event->key() == Qt::Key_F2) {
+        beginRenameSelected();
+        event->accept();
+        return;
+    }
+
+    if (event != nullptr &&
+        event->matches(QKeySequence::Paste) &&
+        pasteClipboardImage()) {
+        event->accept();
+        return;
+    }
+
+    QWidget::keyPressEvent(event);
+}
+
 bool DesktopWindow::eventFilter(QObject *watched, QEvent *event)
 {
-    if (fileView_ != nullptr &&
-        watched == fileView_->viewport() &&
-        event != nullptr &&
-        event->type() == QEvent::MouseButtonRelease &&
-        !restoringLayout_) {
-        scheduleSaveDesktopLayout();
+    if (fileView_ != nullptr && event != nullptr) {
+        if (watched == fileView_->viewport() &&
+            event->type() == QEvent::MouseButtonRelease &&
+            !restoringLayout_) {
+            scheduleSaveDesktopLayout();
+        }
+
+        if ((watched == fileView_ || watched == fileView_->viewport()) &&
+            event->type() == QEvent::KeyPress) {
+            auto *keyEvent = static_cast<QKeyEvent *>(event);
+
+            if (keyEvent->key() == Qt::Key_F2) {
+                beginRenameSelected();
+                return true;
+            }
+
+            if (keyEvent->matches(QKeySequence::Paste) && pasteClipboardImage()) {
+                return true;
+            }
+        }
     }
 
     return QWidget::eventFilter(watched, event);
@@ -1096,4 +1746,52 @@ void DesktopWindow::navigateBack()
     }
 
     revealDesktopFiles();
+}
+
+bool DesktopWindow::pasteClipboardImage()
+{
+    QClipboard *clipboard = QGuiApplication::clipboard();
+
+    if (clipboard == nullptr) {
+        return false;
+    }
+
+    const QMimeData *mime = clipboard->mimeData();
+    QImage image;
+
+    if (mime != nullptr && mime->hasImage()) {
+        image = qvariant_cast<QImage>(mime->imageData());
+    }
+
+    if (image.isNull()) {
+        const QPixmap pixmap = clipboard->pixmap();
+
+        if (!pixmap.isNull()) {
+            image = pixmap.toImage();
+        }
+    }
+
+    if (image.isNull()) {
+        return false;
+    }
+
+    QDir().mkpath(desktopDirectory_);
+
+    const QString stamp = QDateTime::currentDateTime().toString(
+        QStringLiteral("yyyyMMdd-HHmmss"));
+    QString fileName = QStringLiteral("Captura-%1.png").arg(stamp);
+    QString path = QDir(desktopDirectory_).filePath(fileName);
+
+    for (int suffix = 2; QFileInfo::exists(path); ++suffix) {
+        fileName = QStringLiteral("Captura-%1-%2.png").arg(stamp).arg(suffix);
+        path = QDir(desktopDirectory_).filePath(fileName);
+    }
+
+    if (!image.save(path, "PNG")) {
+        return false;
+    }
+
+    clipboard->clear(QClipboard::Clipboard);
+    clipboard->clear(QClipboard::Selection);
+    return true;
 }
