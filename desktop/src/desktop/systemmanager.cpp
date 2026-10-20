@@ -3,6 +3,7 @@
 
 #include <QAbstractItemView>
 #include <QApplication>
+#include <QCloseEvent>
 #include <QDateTime>
 #include <QDir>
 #include <QEvent>
@@ -58,13 +59,15 @@ constexpr QColor kGpu(80, 220, 140);
 const char *kTableStyle = R"(
 QTableWidget {
     background: #1C2230;
+    alternate-background-color: #242B3C;
     color: #E8ECF4;
     border: 1px solid #3A455C;
     border-radius: 14px;
     gridline-color: #2A3346;
     selection-background-color: #2F6F4E;
-    selection-color: white;
+    selection-color: #FFFFFF;
     font-size: 12px;
+    outline: none;
 }
 QHeaderView::section {
     background: #151A24;
@@ -74,7 +77,23 @@ QHeaderView::section {
     padding: 8px;
     font-weight: 600;
 }
-QTableWidget::item { padding: 6px; }
+QTableWidget::item {
+    color: #E8ECF4;
+    background: transparent;
+    padding: 6px;
+}
+QTableWidget::item:alternate {
+    color: #E8ECF4;
+    background: #242B3C;
+}
+QTableWidget::item:selected {
+    color: #FFFFFF;
+    background: #2F6F4E;
+}
+QTableWidget::item:selected:alternate {
+    color: #FFFFFF;
+    background: #2F6F4E;
+}
 QLineEdit {
     background: #151A24;
     color: #F2F4F8;
@@ -342,42 +361,136 @@ double readCpuFrequencyGhz()
     return 0.0;
 }
 
-double readGpuUsage()
+QStringList gpuCardDirs()
 {
+    QStringList cards;
     const QDir drm(QStringLiteral("/sys/class/drm"));
 
-    for (const QString &entry : drm.entryList(QStringList{QStringLiteral("card*")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
+    for (const QString &entry :
+         drm.entryList(QStringList{QStringLiteral("card*")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
         if (entry.contains(QLatin1Char('-'))) {
             continue;
         }
 
-        QFile file(drm.filePath(entry + QStringLiteral("/device/gpu_busy_percent")));
+        cards.push_back(drm.filePath(entry));
+    }
 
-        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            continue;
+    // Prefer discrete cards (higher cardN often, and boot_vga=0).
+    std::sort(cards.begin(), cards.end(), [](const QString &left, const QString &right) {
+        QFile leftBoot(left + QStringLiteral("/device/boot_vga"));
+        QFile rightBoot(right + QStringLiteral("/device/boot_vga"));
+        int leftVga = 1;
+        int rightVga = 1;
+
+        if (leftBoot.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            leftVga = leftBoot.readAll().trimmed().toInt();
         }
 
+        if (rightBoot.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            rightVga = rightBoot.readAll().trimmed().toInt();
+        }
+
+        if (leftVga != rightVga) {
+            return leftVga < rightVga;
+        }
+
+        return left > right;
+    });
+
+    return cards;
+}
+
+double readSysfsPercent(const QString &path)
+{
+    QFile file(path);
+
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return -1.0;
+    }
+
+    bool ok = false;
+    const double value = file.readAll().trimmed().toDouble(&ok);
+    return ok ? value : -1.0;
+}
+
+double readNvidiaGpuUsage()
+{
+    QProcess process;
+    process.start(
+        QStringLiteral("nvidia-smi"),
+        {QStringLiteral("--query-gpu=utilization.gpu"),
+         QStringLiteral("--format=csv,noheader,nounits")});
+
+    if (!process.waitForFinished(700) || process.exitCode() != 0) {
+        return -1.0;
+    }
+
+    bool ok = false;
+    const double value =
+        QString::fromUtf8(process.readAllStandardOutput()).trimmed().split(QLatin1Char('\n')).value(0).toDouble(&ok);
+    return ok ? value : -1.0;
+}
+
+double readGpuUsage()
+{
+    const double nvidia = readNvidiaGpuUsage();
+
+    if (nvidia >= 0.0) {
+        return nvidia;
+    }
+
+    const QStringList cards = gpuCardDirs();
+
+    if (cards.isEmpty()) {
+        return -1.0;
+    }
+
+    // amdgpu/i915 expose an instantaneous busy counter that is often 0 between
+    // frames. Sample a short window and keep the peak so the UI reflects load.
+    double peak = -1.0;
+
+    for (int sample = 0; sample < 8; ++sample) {
+        for (const QString &card : cards) {
+            const double busy = readSysfsPercent(
+                card + QStringLiteral("/device/gpu_busy_percent"));
+            const double mem = readSysfsPercent(
+                card + QStringLiteral("/device/mem_busy_percent"));
+            const double intel = readSysfsPercent(
+                card + QStringLiteral("/gt/gt0/busy_percentage"));
+
+            peak = std::max(peak, busy);
+            peak = std::max(peak, mem);
+            peak = std::max(peak, intel);
+        }
+
+        if (sample + 1 < 8) {
+            usleep(15000);
+        }
+    }
+
+    return peak;
+}
+
+double readGpuTemp()
+{
+    QProcess nvidia;
+    nvidia.start(
+        QStringLiteral("nvidia-smi"),
+        {QStringLiteral("--query-gpu=temperature.gpu"),
+         QStringLiteral("--format=csv,noheader,nounits")});
+
+    if (nvidia.waitForFinished(700) && nvidia.exitCode() == 0) {
         bool ok = false;
-        const double value = file.readAll().trimmed().toDouble(&ok);
+        const double value =
+            QString::fromUtf8(nvidia.readAllStandardOutput()).trimmed().split(QLatin1Char('\n')).value(0).toDouble(&ok);
 
         if (ok) {
             return value;
         }
     }
 
-    return -1.0;
-}
-
-double readGpuTemp()
-{
-    const QDir drm(QStringLiteral("/sys/class/drm"));
-
-    for (const QString &entry : drm.entryList(QStringList{QStringLiteral("card*")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
-        if (entry.contains(QLatin1Char('-'))) {
-            continue;
-        }
-
-        const QDir hwmon(drm.filePath(entry + QStringLiteral("/device/hwmon")));
+    for (const QString &card : gpuCardDirs()) {
+        const QDir hwmon(card + QStringLiteral("/device/hwmon"));
 
         for (const QString &sensor : hwmon.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
             QFile tempFile(hwmon.filePath(sensor + QStringLiteral("/temp1_input")));
@@ -388,6 +501,30 @@ double readGpuTemp()
                 if (value > 0) {
                     return value / 1000.0;
                 }
+            }
+        }
+    }
+
+    return -1.0;
+}
+
+double readGpuPowerWatts()
+{
+    for (const QString &card : gpuCardDirs()) {
+        const QDir hwmon(card + QStringLiteral("/device/hwmon"));
+
+        for (const QString &sensor : hwmon.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+            QFile powerFile(hwmon.filePath(sensor + QStringLiteral("/power1_input")));
+
+            if (!powerFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                continue;
+            }
+
+            bool ok = false;
+            const double microwatts = powerFile.readAll().trimmed().toDouble(&ok);
+
+            if (ok && microwatts > 0) {
+                return microwatts / 1000000.0;
             }
         }
     }
@@ -542,65 +679,71 @@ QPushButton *makeActionButton(const QString &text, const char *role, QWidget *pa
 
 class SystemManager::MetricCard final : public QFrame
 {
-public:
-    MetricCard(const QString &title, const QColor &accent, bool showChart, QWidget *parent = nullptr)
-        : QFrame(parent),
-          accent_(accent),
-          showChart_(showChart)
+    class ChartView final : public QWidget
     {
-        auto *layout = new QVBoxLayout(this);
-        layout->setContentsMargins(16, 14, 16, 12);
-        layout->setSpacing(8);
-
-        title_ = new QLabel(title, this);
-        QFont titleFont = title_->font();
-        titleFont.setPointSize(10);
-        titleFont.setWeight(QFont::DemiBold);
-        title_->setFont(titleFont);
-        title_->setStyleSheet(QStringLiteral("color: %1;").arg(accent.name()));
-        layout->addWidget(title_);
-
-        chartHost_ = new QWidget(this);
-        chartHost_->setMinimumHeight(showChart ? 110 : 48);
-        chartHost_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        chartHost_->installEventFilter(this);
-        layout->addWidget(chartHost_, 1);
-
-        stats_ = new QLabel(this);
-        stats_->setWordWrap(true);
-        stats_->setStyleSheet(QStringLiteral("color: #D7DCE8;"));
-        layout->addWidget(stats_);
-        history_.fill(0.0, 48);
-    }
-
-    void setStats(const QString &text)
-    {
-        stats_->setText(text);
-    }
-
-    void pushSample(double value)
-    {
-        if (!showChart_) {
-            return;
+    public:
+        explicit ChartView(QWidget *parent = nullptr)
+            : QWidget(parent)
+        {
+            setAttribute(Qt::WA_OpaquePaintEvent, false);
+            setAutoFillBackground(false);
+            history_.fill(0.0, 48);
         }
 
-        history_.removeFirst();
-        history_.push_back(std::clamp(value, 0.0, 100.0));
-        chartHost_->update();
-    }
+        void setAccent(const QColor &accent)
+        {
+            accent_ = accent;
+            update();
+        }
 
-protected:
-    bool eventFilter(QObject *watched, QEvent *event) override
-    {
-        if (watched == chartHost_ && event->type() == QEvent::Paint) {
-            QPainter painter(chartHost_);
-            painter.setRenderHint(QPainter::Antialiasing);
+        void setEnabledChart(bool enabled)
+        {
+            enabled_ = enabled;
+            update();
+        }
 
-            if (!showChart_ || history_.size() < 2) {
-                return true;
+        void pushSample(double value)
+        {
+            if (!enabled_) {
+                return;
             }
 
-            const QRect area = chartHost_->rect().adjusted(4, 8, -4, -4);
+            const double clamped = std::clamp(value, 0.0, 100.0);
+
+            if (!seeded_) {
+                history_.fill(clamped);
+                seeded_ = true;
+            } else {
+                history_.removeFirst();
+                history_.push_back(clamped);
+            }
+
+            update();
+        }
+
+    protected:
+        void paintEvent(QPaintEvent *) override
+        {
+            QPainter painter(this);
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.fillRect(rect(), Qt::transparent);
+
+            if (!enabled_ || width() < 8 || height() < 8) {
+                return;
+            }
+
+            const QRect area = rect().adjusted(4, 6, -4, -4);
+
+            painter.setPen(QPen(QColor(255, 255, 255, 18), 1));
+            for (int step = 1; step <= 3; ++step) {
+                const int y = area.top() + (area.height() * step) / 4;
+                painter.drawLine(area.left(), y, area.right(), y);
+            }
+
+            if (history_.size() < 2) {
+                return;
+            }
+
             QPainterPath line;
             QPainterPath fill;
 
@@ -621,18 +764,62 @@ protected:
 
             fill.lineTo(area.right(), area.bottom());
             fill.closeSubpath();
+
             QLinearGradient gradient(0, area.top(), 0, area.bottom());
-            gradient.setColorAt(0.0, QColor(accent_.red(), accent_.green(), accent_.blue(), 140));
-            gradient.setColorAt(1.0, QColor(accent_.red(), accent_.green(), accent_.blue(), 10));
+            gradient.setColorAt(0.0, QColor(accent_.red(), accent_.green(), accent_.blue(), 160));
+            gradient.setColorAt(1.0, QColor(accent_.red(), accent_.green(), accent_.blue(), 20));
             painter.fillPath(fill, gradient);
-            painter.setPen(QPen(accent_, 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            painter.setPen(QPen(accent_, 2.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
             painter.drawPath(line);
-            return true;
         }
 
-        return QFrame::eventFilter(watched, event);
+    private:
+        QColor accent_ = Qt::cyan;
+        QVector<double> history_;
+        bool enabled_ = true;
+        bool seeded_ = false;
+    };
+
+public:
+    MetricCard(const QString &title, const QColor &accent, bool showChart, QWidget *parent = nullptr)
+        : QFrame(parent)
+    {
+        auto *layout = new QVBoxLayout(this);
+        layout->setContentsMargins(16, 14, 16, 12);
+        layout->setSpacing(8);
+
+        title_ = new QLabel(title, this);
+        QFont titleFont = title_->font();
+        titleFont.setPointSize(10);
+        titleFont.setWeight(QFont::DemiBold);
+        title_->setFont(titleFont);
+        title_->setStyleSheet(QStringLiteral("color: %1;").arg(accent.name()));
+        layout->addWidget(title_);
+
+        chart_ = new ChartView(this);
+        chart_->setAccent(accent);
+        chart_->setEnabledChart(showChart);
+        chart_->setMinimumHeight(showChart ? 110 : 48);
+        chart_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        layout->addWidget(chart_, 1);
+
+        stats_ = new QLabel(this);
+        stats_->setWordWrap(true);
+        stats_->setStyleSheet(QStringLiteral("color: #D7DCE8;"));
+        layout->addWidget(stats_);
     }
 
+    void setStats(const QString &text)
+    {
+        stats_->setText(text);
+    }
+
+    void pushSample(double value)
+    {
+        chart_->pushSample(value);
+    }
+
+protected:
     void paintEvent(QPaintEvent *) override
     {
         QPainter painter(this);
@@ -647,10 +834,7 @@ protected:
 private:
     QLabel *title_ = nullptr;
     QLabel *stats_ = nullptr;
-    QWidget *chartHost_ = nullptr;
-    QColor accent_;
-    bool showChart_ = true;
-    QVector<double> history_;
+    ChartView *chart_ = nullptr;
 };
 
 class SystemManager::SidebarButton final : public QPushButton
@@ -890,7 +1074,7 @@ QWidget *SystemManager::buildPerformancePage()
     ramDetailCard_ = new MetricCard(QStringLiteral("MEMÓRIA RAM"), kRam, true, page);
     diskCard_ = new MetricCard(QStringLiteral("DISCO"), kDisk, true, page);
     netCard_ = new MetricCard(QStringLiteral("REDE"), kNet, true, page);
-    gpuCard_ = new MetricCard(QStringLiteral("PLACA DE VÍDEO (GPU)"), kGpu, false, page);
+    gpuCard_ = new MetricCard(QStringLiteral("PLACA DE VÍDEO (GPU)"), kGpu, true, page);
 
     grid->addWidget(cpuCard_, 0, 0, 1, 3);
     grid->addWidget(ramChartCard_, 1, 0, 1, 2);
@@ -932,10 +1116,20 @@ QWidget *SystemManager::buildTablePage(
     (*table)->setSelectionMode(QAbstractItemView::SingleSelection);
     (*table)->setEditTriggers(QAbstractItemView::NoEditTriggers);
     (*table)->setAlternatingRowColors(true);
+    (*table)->setShowGrid(false);
     (*table)->verticalHeader()->setVisible(false);
     (*table)->horizontalHeader()->setStretchLastSection(true);
     (*table)->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     (*table)->setSortingEnabled(true);
+
+    QPalette tablePalette = (*table)->palette();
+    tablePalette.setColor(QPalette::Base, QColor(QStringLiteral("#1C2230")));
+    tablePalette.setColor(QPalette::AlternateBase, QColor(QStringLiteral("#242B3C")));
+    tablePalette.setColor(QPalette::Text, QColor(QStringLiteral("#E8ECF4")));
+    tablePalette.setColor(QPalette::HighlightedText, Qt::white);
+    tablePalette.setColor(QPalette::Highlight, QColor(QStringLiteral("#2F6F4E")));
+    (*table)->setPalette(tablePalette);
+
     layout->addWidget(*table, 1);
     return page;
 }
@@ -1031,11 +1225,27 @@ bool SystemManager::nativeEventFilter(const QByteArray &eventType, void *message
     return true;
 }
 
+void SystemManager::dismiss()
+{
+    if (dismissing_) {
+        return;
+    }
+
+    dismissing_ = true;
+    timer_->stop();
+    hide();
+
+    if (DockBar *dock = DockBar::instance()) {
+        dock->noteClosed(QStringLiteral("Gerenciador do Sistema"));
+    }
+
+    dismissing_ = false;
+}
+
 void SystemManager::toggle()
 {
     if (isVisible()) {
-        hide();
-        timer_->stop();
+        dismiss();
         return;
     }
 
@@ -1049,7 +1259,10 @@ void SystemManager::toggle()
     if (DockBar *dock = DockBar::instance()) {
         dock->notifyOpening(
             QStringLiteral("Gerenciador do Sistema"),
-            style()->standardIcon(QStyle::SP_ComputerIcon));
+            style()->standardIcon(QStyle::SP_ComputerIcon),
+            {},
+            0,
+            {QStringLiteral("Gerenciador do Sistema")});
     }
 }
 
@@ -1200,10 +1413,21 @@ void SystemManager::refreshPerformance()
 
     const double gpuUsage = readGpuUsage();
     const double gpuTemp = readGpuTemp();
-    gpuCard_->setStats(
-        QStringLiteral("Uso: %1\nTemp: %2")
-            .arg(gpuUsage >= 0 ? QStringLiteral("%1%").arg(gpuUsage, 0, 'f', 0) : QStringLiteral("--"))
-            .arg(gpuTemp >= 0 ? formatDegrees(gpuTemp) : QStringLiteral("--")));
+    const double gpuPower = readGpuPowerWatts();
+    const double gpuSample = gpuUsage >= 0.0 ? gpuUsage : 0.0;
+    gpuCard_->pushSample(gpuSample);
+
+    QStringList gpuLines;
+    gpuLines << QStringLiteral("Uso: %1").arg(
+        gpuUsage >= 0 ? QStringLiteral("%1%").arg(gpuUsage, 0, 'f', 0) : QStringLiteral("--"));
+    gpuLines << QStringLiteral("Temp: %1").arg(
+        gpuTemp >= 0 ? formatDegrees(gpuTemp) : QStringLiteral("--"));
+
+    if (gpuPower >= 0) {
+        gpuLines << QStringLiteral("Energia: %1 W").arg(gpuPower, 0, 'f', 1);
+    }
+
+    gpuCard_->setStats(gpuLines.join(QLatin1Char('\n')));
 
     lastSampleMs_ = now;
 }
@@ -1626,11 +1850,16 @@ void SystemManager::showEvent(QShowEvent *event)
     refreshAll();
 }
 
+void SystemManager::closeEvent(QCloseEvent *event)
+{
+    event->accept();
+    dismiss();
+}
+
 void SystemManager::keyPressEvent(QKeyEvent *event)
 {
     if (event->key() == Qt::Key_Escape) {
-        hide();
-        timer_->stop();
+        dismiss();
         return;
     }
 

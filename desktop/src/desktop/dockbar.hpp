@@ -1,14 +1,18 @@
 #pragma once
 
+#include "desktop/docksettings.hpp"
+
 #include <QPixmap>
 #include <QRect>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <QWidget>
 
 class QIcon;
 class QMouseEvent;
 class QPaintEvent;
+class QPainterPath;
 class QProcess;
 class QTimer;
 
@@ -18,11 +22,19 @@ public:
     explicit DockBar(QWidget *parent = nullptr);
 
     void place(const QRect &screen);
+    void applySettings(const EdenDock::Settings &settings);
+    [[nodiscard]] EdenDock::Settings settings() const;
 
     static void bind(DockBar *dock);
     static DockBar *instance();
 
-    void notifyOpening(const QString &label, const QIcon &icon);
+    void notifyOpening(
+        const QString &label,
+        const QIcon &icon,
+        const QStringList &matchClasses = {},
+        qint64 pid = 0,
+        const QStringList &matchTitles = {});
+    void noteClosed(const QString &label);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -33,6 +45,9 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
 
     void showDesktopMenu(int index);
+    void showEntryMenu(int index);
+    void activateOrLaunch(int index);
+    void closeEntry(int index);
     void startBuild(int index);
     void finishBuild(int exitCode, bool normalExit);
 
@@ -47,7 +62,11 @@ private:
         bool launched = false;
         bool loading = false;
         bool ephemeral = false;
-        qint64 loadingUntil = 0;
+        bool closeable = true;
+        qint64 loadingStarted = 0;
+        QStringList matchClasses;
+        QStringList matchTitles;
+        QVector<qint64> pids;
         bool (*launch)() = nullptr;
     };
 
@@ -56,11 +75,19 @@ private:
     void updateMask();
     void refreshGlass();
     void compose();
+    void publishDockStrut();
     void beginLoading(int index);
     void tickLoading();
+    void syncLabelFont();
+    void rememberPid(int index, qint64 pid);
+    [[nodiscard]] QPainterPath barPath() const;
+    [[nodiscard]] bool anyLoading() const;
+    [[nodiscard]] bool activateEntry(int index);
     [[nodiscard]] int findEntry(const QString &label) const;
     [[nodiscard]] int separatorIndex() const;
     [[nodiscard]] int iconSize(int index) const;
+    [[nodiscard]] int labelHeight() const;
+    [[nodiscard]] double bounceProgress(int index) const;
     [[nodiscard]] int bounceOffset(int index) const;
     [[nodiscard]] int entryAt(const QPoint &position) const;
 
@@ -76,17 +103,13 @@ private:
     QTimer *loadingTimer_ = nullptr;
     int buildIndex_ = -1;
     int hover_ = -1;
-    double loadingPhase_ = 0.0;
+    EdenDock::Settings settings_;
 
     static DockBar *active_;
 
-    static constexpr int kIconRest = 48;
-    static constexpr int kIconHover = 64;
-    static constexpr int kGap = 8;
     static constexpr int kPadX = 14;
     static constexpr int kPadY = 10;
-    static constexpr int kLabelHeight = 28;
     static constexpr int kLabelGap = 8;
-    static constexpr int kBottomMargin = 6;
-    static constexpr int kLoadingMs = 2800;
+    static constexpr int kBounceMs = 1200;
+    static constexpr int kBouncePeak = 18;
 };

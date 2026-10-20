@@ -1,4 +1,3 @@
-
 #include <QApplication>
 #include <QScreen>
 #include <QStyle>
@@ -6,9 +5,13 @@
 #include <QWidget>
 #include "desktop/desktopwindow.hpp"
 #include "desktop/dockbar.hpp"
+#include "desktop/monitorlayout.hpp"
 #include "desktop/programsearch.hpp"
+#include "desktop/screenshot.hpp"
+#include "desktop/shelllayout.hpp"
 #include "desktop/statusbar.hpp"
 #include "desktop/systemmanager.hpp"
+#include <QTimer>
 #include <QPainter>
 #include <QColor>
 #include <QContextMenuEvent>
@@ -27,76 +30,6 @@
 #include <QProcess>
 #include <QFileInfo>
 #include "filemanager/filemanagerwindow.hpp"
-
-static QRect workAreaOr(const QRect &fallback)
-{
-    auto *native =
-        qGuiApp->nativeInterface<
-            QNativeInterface::QX11Application
-        >();
-
-    if (native == nullptr || native->connection() == nullptr) {
-        return fallback;
-    }
-
-    xcb_connection_t *connection = native->connection();
-    const xcb_setup_t *setup = xcb_get_setup(connection);
-
-    if (setup == nullptr) {
-        return fallback;
-    }
-
-    const xcb_screen_t *screen = xcb_setup_roots_iterator(setup).data;
-
-    if (screen == nullptr) {
-        return fallback;
-    }
-
-    const char *name = "_NET_WORKAREA";
-    auto atomCookie = xcb_intern_atom(
-        connection,
-        1,
-        static_cast<uint16_t>(std::strlen(name)),
-        name);
-    auto *atomReply = xcb_intern_atom_reply(connection, atomCookie, nullptr);
-
-    if (atomReply == nullptr || atomReply->atom == XCB_ATOM_NONE) {
-        std::free(atomReply);
-        return fallback;
-    }
-
-    auto propertyCookie = xcb_get_property(
-        connection,
-        0,
-        screen->root,
-        atomReply->atom,
-        XCB_ATOM_CARDINAL,
-        0,
-        4);
-    std::free(atomReply);
-
-    auto *property = xcb_get_property_reply(connection, propertyCookie, nullptr);
-
-    if (property == nullptr || xcb_get_property_value_length(property) < 16) {
-        std::free(property);
-        return fallback;
-    }
-
-    const auto *values = static_cast<const uint32_t *>(
-        xcb_get_property_value(property));
-    const QRect area(
-        static_cast<int>(values[0]),
-        static_cast<int>(values[1]),
-        static_cast<int>(values[2]),
-        static_cast<int>(values[3]));
-    std::free(property);
-
-    if (area.width() < 100 || area.height() < 100) {
-        return fallback;
-    }
-
-    return area;
-}
 
 static bool setDesktopWindowType(xcb_window_t window)
 {
@@ -215,6 +148,8 @@ int main(int argc, char *argv[])
         }
     )"));
 
+    EdenMonitors::applySaved();
+
     DesktopWindow desktop;
 
     QScreen *screen = QApplication::primaryScreen();
@@ -223,15 +158,9 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    const QRect full = screen->geometry();
-    QRect area = workAreaOr(full);
-
-    if (area.top() < StatusBar::kBarHeight) {
-        area.setTop(StatusBar::kBarHeight);
-    }
-
     desktop.setAttribute(Qt::WA_NativeWindow);
-    desktop.setGeometry(area);
+    EdenShell::bind(&desktop, nullptr, nullptr);
+    EdenShell::relayout();
 
     if (!setDesktopWindowType(static_cast<xcb_window_t>(desktop.winId()))) {
         return 1;
@@ -241,16 +170,21 @@ int main(int argc, char *argv[])
 
     DockBar dock;
     DockBar::bind(&dock);
-    dock.place(full);
-    dock.show();
 
     StatusBar statusBar;
-    statusBar.place(full);
+
+    EdenShell::bind(&desktop, &dock, &statusBar);
+    EdenShell::relayout();
+    dock.show();
     statusBar.show();
+
+    EdenShell::watchScreens(&app);
+    QTimer::singleShot(200, &app, []() { EdenShell::relayout(); });
+    QTimer::singleShot(600, &app, []() { EdenShell::relayout(); });
 
     ProgramSearch::install();
     SystemManager::install();
+    ScreenshotService::install();
 
     return app.exec();
 }
-

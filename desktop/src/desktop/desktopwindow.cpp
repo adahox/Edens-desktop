@@ -1,5 +1,7 @@
 
 #include "desktopwindow.hpp"
+#include "desktop/desktoplaunch.hpp"
+#include "desktop/dockbar.hpp"
 
 #include <QAction>
 #include <QColor>
@@ -13,6 +15,7 @@
 #include <QProcess>
 #include <QStandardPaths>
 #include <QDir>
+#include <QMoveEvent>
 #include <QResizeEvent>
 #include <QPixmap>
 #include <QDesktopServices>
@@ -49,7 +52,20 @@ public:
 
     QIcon icon(const QFileInfo &info) const override
     {
-        return info.isDir() ? directoryIcon_ : fileIcon_;
+        if (info.isDir()) {
+            return directoryIcon_;
+        }
+
+        if (info.suffix().compare(QLatin1String("desktop"), Qt::CaseInsensitive) == 0) {
+            const QIcon desktopIcon =
+                EdenDesktop::iconFor(EdenDesktop::fields(info.absoluteFilePath()));
+
+            if (!desktopIcon.isNull()) {
+                return desktopIcon;
+            }
+        }
+
+        return fileIcon_;
     }
 
 private:
@@ -424,7 +440,21 @@ void DesktopWindow::revealDesktopFiles()
         QDir::DirsFirst | QDir::IgnoreCase | QDir::Name);
 
     for (const QFileInfo &info : entries) {
-        auto *item = new QStandardItem(iconProvider_->icon(info), info.fileName());
+        QString label = info.fileName();
+
+        if (info.suffix().compare(QLatin1String("desktop"), Qt::CaseInsensitive) == 0) {
+            const QHash<QString, QString> desktopFields =
+                EdenDesktop::fields(info.absoluteFilePath());
+            const QString name = EdenDesktop::localizedName(desktopFields);
+
+            if (!name.isEmpty()) {
+                label = name;
+            } else {
+                label = info.completeBaseName();
+            }
+        }
+
+        auto *item = new QStandardItem(iconProvider_->icon(info), label);
         item->setData(info.absoluteFilePath(), Qt::UserRole);
         item->setEditable(false);
         fileModel_->appendRow(item);
@@ -559,16 +589,51 @@ void DesktopWindow::openItem(const QModelIndex &index)
         }
     }
 
+    if (info.suffix().compare(QLatin1String("desktop"), Qt::CaseInsensitive) == 0) {
+        qint64 pid = 0;
+        const QHash<QString, QString> desktopFields = EdenDesktop::fields(path);
+        const QString name = EdenDesktop::localizedName(desktopFields);
+
+        if (EdenDesktop::launchDesktopFile(path, &pid)) {
+            if (DockBar *dock = DockBar::instance()) {
+                dock->notifyOpening(
+                    name.isEmpty() ? info.completeBaseName() : name,
+                    EdenDesktop::iconFor(desktopFields),
+                    EdenDesktop::matchHints(desktopFields),
+                    pid);
+            }
+
+            return;
+        }
+
+        qWarning() << "Não foi possível executar o atalho:" << path;
+        return;
+    }
+
     QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
 
 
+void DesktopWindow::refreshWallpaper()
+{
+    if (fileView_ != nullptr) {
+        fileView_->setGeometry(rect());
+    }
+
+    applyWallpaper();
+}
+
 void DesktopWindow::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
-    fileView_->setGeometry(rect());
-    applyWallpaper();
+    refreshWallpaper();
+}
+
+void DesktopWindow::moveEvent(QMoveEvent *event)
+{
+    QWidget::moveEvent(event);
+    refreshWallpaper();
 }
 
 

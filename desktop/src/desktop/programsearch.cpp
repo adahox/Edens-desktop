@@ -1,4 +1,5 @@
 #include "desktop/programsearch.hpp"
+#include "desktop/desktoplaunch.hpp"
 #include "desktop/dockbar.hpp"
 
 #include <QApplication>
@@ -26,6 +27,7 @@
 #include <xcb/xcb.h>
 
 #include <algorithm>
+#include <cstdlib>
 
 namespace {
 
@@ -248,7 +250,47 @@ void ProgramSearch::install()
     auto *search = new ProgramSearch;
     qApp->installNativeEventFilter(search);
     qApp->installEventFilter(search);
-    search->grabHotkey();
+}
+
+bool ProgramSearch::isToggleSearchMessage(const void *message) const
+{
+    const auto *event = static_cast<const xcb_generic_event_t *>(message);
+
+    if ((event->response_type & 0x7f) != XCB_CLIENT_MESSAGE) {
+        return false;
+    }
+
+    auto *native = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
+
+    if (native == nullptr || native->connection() == nullptr) {
+        return false;
+    }
+
+    if (toggleSearchAtom_ == 0) {
+        const char name[] = "_EDEN_TOGGLE_SEARCH";
+        const auto cookie = xcb_intern_atom(
+            native->connection(),
+            0,
+            static_cast<uint16_t>(sizeof(name) - 1),
+            name);
+        xcb_intern_atom_reply_t *reply =
+            xcb_intern_atom_reply(native->connection(), cookie, nullptr);
+
+        if (reply == nullptr) {
+            return false;
+        }
+
+        toggleSearchAtom_ = reply->atom;
+        std::free(reply);
+    }
+
+    if (toggleSearchAtom_ == 0) {
+        return false;
+    }
+
+    const auto *client =
+        reinterpret_cast<const xcb_client_message_event_t *>(message);
+    return client->type == toggleSearchAtom_;
 }
 
 bool ProgramSearch::nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result)
@@ -259,76 +301,14 @@ bool ProgramSearch::nativeEventFilter(const QByteArray &eventType, void *message
         return false;
     }
 
-    const auto *event = static_cast<const xcb_generic_event_t *>(message);
-    const uint8_t type = event->response_type & 0x7f;
-    const auto *key = reinterpret_cast<const xcb_key_press_event_t *>(event);
-    constexpr uint8_t kKeyF = 41;
-
-    if (key->detail != kKeyF) {
+    if (!isToggleSearchMessage(message)) {
         return false;
-    }
-
-    if (type == XCB_KEY_RELEASE) {
-        lastRelease_ = key->time;
-        haveRelease_ = true;
-        return false;
-    }
-
-    if (type != XCB_KEY_PRESS || (key->state & XCB_MOD_MASK_4) == 0) {
-        return false;
-    }
-
-    if (haveRelease_ && key->time - lastRelease_ < 40) {
-        return true;
     }
 
     QTimer::singleShot(0, this, [this]() {
         toggle();
     });
     return true;
-}
-
-void ProgramSearch::grabHotkey()
-{
-    auto *native = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
-
-    if (native == nullptr || native->connection() == nullptr) {
-        return;
-    }
-
-    xcb_connection_t *connection = native->connection();
-    const xcb_setup_t *setup = xcb_get_setup(connection);
-
-    if (setup == nullptr) {
-        return;
-    }
-
-    const xcb_screen_t *screen = xcb_setup_roots_iterator(setup).data;
-
-    if (screen == nullptr) {
-        return;
-    }
-
-    constexpr uint8_t kKeyF = 41;
-    const uint16_t locks[] = {
-        0,
-        XCB_MOD_MASK_LOCK,
-        XCB_MOD_MASK_2,
-        static_cast<uint16_t>(XCB_MOD_MASK_LOCK | XCB_MOD_MASK_2)
-    };
-
-    for (const uint16_t lock : locks) {
-        xcb_grab_key(
-            connection,
-            1,
-            screen->root,
-            static_cast<uint16_t>(XCB_MOD_MASK_4 | lock),
-            kKeyF,
-            XCB_GRAB_MODE_ASYNC,
-            XCB_GRAB_MODE_ASYNC);
-    }
-
-    xcb_flush(connection);
 }
 
 void ProgramSearch::toggle()
@@ -403,6 +383,7 @@ void ProgramSearch::reloadPrograms()
             }
 
             program.arguments = arguments;
+            program.matchClasses = EdenDesktop::matchHints(fields);
             program.terminal = flagIsTrue(fields.value(QStringLiteral("Terminal")));
             program.icon = programIcon(fields.value(QStringLiteral("Icon")));
             program.haystack = (
@@ -494,53 +475,20 @@ void ProgramSearch::launchCurrent()
     }
 
     const Program &program = programs_.at(index);
-    QStringList arguments = program.arguments;
 
-    if (arguments.isEmpty()) {
+    if (program.arguments.isEmpty()) {
         return;
     }
 
-    const QString executable = arguments.takeFirst();
-    bool started = false;
+    qint64 pid = 0;
 
-    if (program.terminal) {
-        const QStringList terminals = {
-            QStringLiteral("x-terminal-emulator"),
-            QStringLiteral("gnome-terminal"),
-            QStringLiteral("xfce4-terminal"),
-            QStringLiteral("xterm")
-        };
-
-        for (const QString &terminal : terminals) {
-            const QString path = QStandardPaths::findExecutable(terminal);
-
-            if (path.isEmpty()) {
-                continue;
-            }
-
-            QStringList terminalArguments;
-
-            if (terminal == QLatin1String("gnome-terminal")) {
-                terminalArguments.push_back(QStringLiteral("--"));
-            } else {
-                terminalArguments.push_back(QStringLiteral("-e"));
-            }
-
-            terminalArguments.push_back(executable);
-            terminalArguments.append(arguments);
-            started = QProcess::startDetached(path, terminalArguments);
-
-            if (started) {
-                break;
-            }
-        }
-    } else {
-        started = QProcess::startDetached(executable, arguments);
-    }
-
-    if (started) {
+    if (EdenDesktop::launchCommand(program.arguments, program.terminal, &pid)) {
         if (DockBar *dock = DockBar::instance()) {
-            dock->notifyOpening(program.name, program.icon);
+            dock->notifyOpening(
+                program.name,
+                program.icon,
+                program.matchClasses,
+                pid);
         }
 
         hide();

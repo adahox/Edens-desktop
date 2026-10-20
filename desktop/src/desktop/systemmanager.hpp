@@ -6,6 +6,7 @@
 #include <QVector>
 #include <QWidget>
 
+class QCloseEvent;
 class QLabel;
 class QPushButton;
 class QStackedWidget;
@@ -24,10 +25,12 @@ public:
     bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 
     void toggle();
+    void dismiss();
 
 protected:
     void paintEvent(QPaintEvent *event) override;
     void showEvent(QShowEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
 
 private:
@@ -98,6 +101,7 @@ private:
     quint64 lastProcessCpuTotal_ = 0;
     uint32_t lastRelease_ = 0;
     bool haveRelease_ = false;
+    bool dismissing_ = false;
 
     static SystemManager *active_;
 

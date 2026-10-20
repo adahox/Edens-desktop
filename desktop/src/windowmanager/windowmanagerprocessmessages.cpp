@@ -28,6 +28,9 @@ void WindowManager::processMessages(xcb_generic_event_t* event)
     case XCB_KEY_PRESS:
         processKeyPress(event);
         break;
+    case XCB_KEY_RELEASE:
+        processKeyRelease(event);
+        break;
     case XCB_BUTTON_PRESS:
         processButtonPress(event);
         break;
@@ -69,6 +72,9 @@ void WindowManager::processMessages(xcb_generic_event_t* event)
         break;
     case XCB_CLIENT_MESSAGE:
         processClientMessage(event);
+        break;
+    case XCB_PROPERTY_NOTIFY:
+        processPropertyNotify(event);
         break;
     default:
         break;
@@ -115,13 +121,71 @@ void launchTerminal()
 
 }  // namespace
 
+void WindowManager::requestToggleSearch()
+{
+    if (!isConnected() || desktopWindows_.empty()) {
+        return;
+    }
+
+    const xcb_atom_t atom = internAtom("_EDEN_TOGGLE_SEARCH");
+
+    if (atom == XCB_ATOM_NONE) {
+        return;
+    }
+
+    for (const xcb_window_t desktop : desktopWindows_) {
+        xcb_client_message_event_t message = {};
+        message.response_type = XCB_CLIENT_MESSAGE;
+        message.format = 32;
+        message.window = desktop;
+        message.type = atom;
+        message.data.data32[0] = XCB_CURRENT_TIME;
+        xcb_send_event(
+            connection_,
+            0,
+            desktop,
+            XCB_EVENT_MASK_NO_EVENT,
+            reinterpret_cast<const char*>(&message));
+    }
+
+    xcb_flush(connection_);
+}
+
 void WindowManager::processKeyPress(xcb_generic_event_t* event)
 {
     const auto* key = reinterpret_cast<xcb_key_press_event_t*>(event);
+    const bool superKey = key->detail == 133 || key->detail == 134;
     const bool super = (key->state & XCB_MOD_MASK_4) != 0;
     const bool alt = (key->state & XCB_MOD_MASK_1) != 0;
     const bool control = (key->state & XCB_MOD_MASK_CONTROL) != 0;
     const bool shift = (key->state & XCB_MOD_MASK_SHIFT) != 0;
+
+    if (superKey) {
+        if (superHeld_) {
+            return;
+        }
+
+        superHeld_ = true;
+        superChord_ = false;
+
+        const auto cookie = xcb_grab_keyboard(
+            connection_,
+            0,
+            screen_->root,
+            key->time,
+            XCB_GRAB_MODE_ASYNC,
+            XCB_GRAB_MODE_ASYNC);
+        xcb_grab_keyboard_reply_t* reply =
+            xcb_grab_keyboard_reply(connection_, cookie, nullptr);
+        keyboardGrabbed_ =
+            reply != nullptr && reply->status == XCB_GRAB_STATUS_SUCCESS;
+        std::free(reply);
+        return;
+    }
+
+    if (superHeld_) {
+        superChord_ = true;
+    }
 
     if (alt && key->detail == 23) {
         cycleFocus(shift ? -1 : 1);
@@ -185,6 +249,34 @@ void WindowManager::processKeyPress(xcb_generic_event_t* event)
     }
 }
 
+void WindowManager::processKeyRelease(xcb_generic_event_t* event)
+{
+    const auto* key = reinterpret_cast<xcb_key_release_event_t*>(event);
+
+    if (key->detail != 133 && key->detail != 134) {
+        return;
+    }
+
+    if (!superHeld_) {
+        return;
+    }
+
+    const bool alone = !superChord_;
+    superHeld_ = false;
+    superChord_ = false;
+
+    if (keyboardGrabbed_) {
+        xcb_ungrab_keyboard(connection_, key->time);
+        keyboardGrabbed_ = false;
+    }
+
+    if (alone) {
+        requestToggleSearch();
+    }
+
+    xcb_flush(connection_);
+}
+
 void WindowManager::processUnmapNotify(xcb_generic_event_t* event)
 {
     const auto* unmapEvent =
@@ -208,6 +300,7 @@ void WindowManager::processButtonPress(xcb_generic_event_t* event)
 {
     const auto* button =
         reinterpret_cast<xcb_button_press_event_t*>(event);
+    lastPointerTime_ = button->time;
 
     if (button->event == panel_) {
         handlePanelPress(button->event_x);
@@ -496,6 +589,122 @@ void WindowManager::processButtonRelease()
     xcb_flush(connection_);
 }
 
+bool WindowManager::grabPointerForOperation()
+{
+    const xcb_timestamp_t stamps[] = {
+        lastPointerTime_,
+        static_cast<xcb_timestamp_t>(XCB_CURRENT_TIME)
+    };
+
+    for (const xcb_timestamp_t stamp : stamps) {
+        const auto cookie = xcb_grab_pointer(
+            connection_,
+            0,
+            screen_->root,
+            XCB_EVENT_MASK_BUTTON_RELEASE | XCB_EVENT_MASK_POINTER_MOTION,
+            XCB_GRAB_MODE_ASYNC,
+            XCB_GRAB_MODE_ASYNC,
+            XCB_WINDOW_NONE,
+            XCB_CURSOR_NONE,
+            stamp);
+        xcb_grab_pointer_reply_t* reply =
+            xcb_grab_pointer_reply(connection_, cookie, nullptr);
+        const bool grabbed =
+            reply != nullptr && reply->status == XCB_GRAB_STATUS_SUCCESS;
+        std::free(reply);
+
+        if (grabbed) {
+            return true;
+        }
+
+        if (stamp == XCB_CURRENT_TIME) {
+            break;
+        }
+    }
+
+    return false;
+}
+
+void WindowManager::beginNetWmMoveResize(
+    ManagedWindow& window,
+    int16_t rootX,
+    int16_t rootY,
+    uint32_t direction)
+{
+    if (netWmMoveResizeIsCancel(direction)) {
+        draggingFrame_ = XCB_WINDOW_NONE;
+        resizingFrame_ = XCB_WINDOW_NONE;
+        resizingDirection_ = ResizeDirection::None;
+        xcb_ungrab_pointer(connection_, XCB_CURRENT_TIME);
+        xcb_flush(connection_);
+        return;
+    }
+
+    const bool move = netWmMoveResizeIsMove(direction);
+    const ResizeDirection resize = resizeDirectionForNetWm(direction);
+
+    if (!move && resize == ResizeDirection::None) {
+        return;
+    }
+
+    focusWindow(window, lastPointerTime_ != XCB_CURRENT_TIME ? lastPointerTime_ : XCB_CURRENT_TIME);
+
+    if (move && window.maximized) {
+        toggleMaximize(window);
+
+        const auto restoredCookie = xcb_get_geometry(connection_, window.frame);
+        xcb_get_geometry_reply_t* restored =
+            xcb_get_geometry_reply(connection_, restoredCookie, nullptr);
+
+        if (restored != nullptr) {
+            int16_t newX = static_cast<int16_t>(rootX - static_cast<int16_t>(restored->width / 2));
+            int16_t newY = static_cast<int16_t>(rootY - 16);
+            const int16_t top = workArea().y;
+
+            if (newY < top) {
+                newY = top;
+            }
+
+            layoutFrame(window, newX, newY, restored->width, restored->height, true);
+            std::free(restored);
+        }
+    }
+
+    const auto frameCookie = xcb_get_geometry(connection_, window.frame);
+    xcb_get_geometry_reply_t* frameGeometry =
+        xcb_get_geometry_reply(connection_, frameCookie, nullptr);
+
+    if (frameGeometry == nullptr) {
+        return;
+    }
+
+    dragStartX_ = rootX;
+    dragStartY_ = rootY;
+    frameStartX_ = frameGeometry->x;
+    frameStartY_ = frameGeometry->y;
+    frameStartWidth_ = frameGeometry->width;
+    frameStartHeight_ = frameGeometry->height;
+    std::free(frameGeometry);
+
+    if (move) {
+        draggingFrame_ = window.frame;
+        resizingFrame_ = XCB_WINDOW_NONE;
+        resizingDirection_ = ResizeDirection::None;
+    } else {
+        draggingFrame_ = XCB_WINDOW_NONE;
+        resizingFrame_ = window.frame;
+        resizingDirection_ = resize;
+    }
+
+    if (!grabPointerForOperation()) {
+        draggingFrame_ = XCB_WINDOW_NONE;
+        resizingFrame_ = XCB_WINDOW_NONE;
+        resizingDirection_ = ResizeDirection::None;
+    }
+
+    xcb_flush(connection_);
+}
+
 void WindowManager::processMapRequest(xcb_generic_event_t* event)
 {
     const auto* mapEvent =
@@ -592,7 +801,9 @@ void WindowManager::fitDesktopWindow(xcb_window_t window)
         return;
     }
 
-    const MonitorRect area = workArea();
+    // Wallpaper covers the full virtual desktop (all monitors). Work-area
+    // insets (status bar / dock) apply only to managed application windows.
+    const MonitorRect area = virtualDesktopBounds();
     const auto cookie = xcb_get_geometry(connection_, window);
     xcb_get_geometry_reply_t* geometry =
         xcb_get_geometry_reply(connection_, cookie, nullptr);
@@ -677,11 +888,39 @@ void WindowManager::processConfigureRequest(xcb_generic_event_t* event)
     }
 
     if (managed != windows_.end()) {
-        if (managed->second.maximized) {
+        ManagedWindow& window = managed->second;
+
+        // Maximized clients still try to configure themselves; keep them
+        // filling the work area instead of ignoring the request (which left
+        // a black frame larger than the visible toolkit window).
+        if (window.maximized) {
+            const auto frameCookie = xcb_get_geometry(connection_, window.frame);
+            xcb_get_geometry_reply_t* frameGeometry =
+                xcb_get_geometry_reply(connection_, frameCookie, nullptr);
+
+            if (frameGeometry != nullptr) {
+                const int16_t anchorX = static_cast<int16_t>(
+                    frameGeometry->x +
+                    static_cast<int16_t>(frameGeometry->width / 2));
+                const int16_t anchorY = static_cast<int16_t>(
+                    frameGeometry->y +
+                    static_cast<int16_t>(frameGeometry->height / 2));
+                std::free(frameGeometry);
+
+                const MonitorRect area = workAreaAt(anchorX, anchorY);
+                layoutFrame(
+                    window,
+                    area.x,
+                    area.y,
+                    area.width,
+                    area.height,
+                    false);
+                xcb_flush(connection_);
+            }
+
             return;
         }
 
-        ManagedWindow& window = managed->second;
         const auto frameCookie = xcb_get_geometry(connection_, window.frame);
         xcb_generic_error_t* frameError = nullptr;
         xcb_get_geometry_reply_t* frameGeometry =
@@ -707,8 +946,10 @@ void WindowManager::processConfigureRequest(xcb_generic_event_t* event)
             x = configureEvent->x;
         }
 
+        const uint16_t chrome = clientTopOffset(window.decorated);
+
         if ((configureEvent->value_mask & XCB_CONFIG_WINDOW_Y) != 0) {
-            y = static_cast<int16_t>(configureEvent->y - kTitleBarHeight);
+            y = static_cast<int16_t>(configureEvent->y - chrome);
         }
 
         if ((configureEvent->value_mask & XCB_CONFIG_WINDOW_WIDTH) != 0) {
@@ -716,10 +957,7 @@ void WindowManager::processConfigureRequest(xcb_generic_event_t* event)
         }
 
         if ((configureEvent->value_mask & XCB_CONFIG_WINDOW_HEIGHT) != 0) {
-            const uint32_t clientHeight = configureEvent->height;
-            height = clientHeight + kTitleBarHeight > 65535u
-                ? static_cast<uint16_t>(65535u)
-                : static_cast<uint16_t>(clientHeight + kTitleBarHeight);
+            height = frameHeightForClient(configureEvent->height, window.decorated);
         }
 
         const FrameSize clamped = clampFrameSize(
@@ -886,5 +1124,36 @@ void WindowManager::processResizeMotion(const xcb_motion_notify_event_t* motion)
     }
 
     layoutFrame(*window, newX, newY, static_cast<uint16_t>(newWidth), static_cast<uint16_t>(newHeight));
+    xcb_flush(connection_);
+}
+
+void WindowManager::processPropertyNotify(xcb_generic_event_t* event)
+{
+    const auto* property =
+        reinterpret_cast<const xcb_property_notify_event_t*>(event);
+
+    if (property == nullptr) {
+        return;
+    }
+
+    auto iterator = windows_.find(property->window);
+
+    if (iterator == windows_.end()) {
+        return;
+    }
+
+    if (property->atom != motifWmHints_ &&
+        property->atom != gtkFrameExtents_) {
+        return;
+    }
+
+    ManagedWindow& window = iterator->second;
+    const bool wantsTitle = clientWantsTitleBar(window.client);
+
+    if (wantsTitle == window.decorated) {
+        return;
+    }
+
+    applyDecorationMode(window, wantsTitle);
     xcb_flush(connection_);
 }

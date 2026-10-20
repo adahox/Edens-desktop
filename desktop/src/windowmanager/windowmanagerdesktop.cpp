@@ -207,61 +207,172 @@ void WindowManager::noteDock(xcb_window_t window)
         netWmStrut_ = internAtom("_NET_WM_STRUT");
     }
 
-    const auto cookie = xcb_get_property(
-        connection_,
-        0,
-        window,
-        netWmStrut_,
-        XCB_ATOM_CARDINAL,
-        0,
-        4);
+    // Rebuild reserved edges from every dock on the root (status bar + dock).
+    reservedLeft_ = 0;
+    reservedRight_ = 0;
+    reservedTop_ = 0;
+    reservedBottom_ = 0;
 
-    xcb_get_property_reply_t* reply =
-        xcb_get_property_reply(connection_, cookie, nullptr);
+    const auto treeCookie = xcb_query_tree(connection_, screen_->root);
+    xcb_query_tree_reply_t* tree =
+        xcb_query_tree_reply(connection_, treeCookie, nullptr);
 
-    if (reply == nullptr) {
-        xcb_flush(connection_);
-        return;
-    }
+    if (tree != nullptr) {
+        xcb_window_t* children = xcb_query_tree_children(tree);
+        const int count = xcb_query_tree_children_length(tree);
 
-    const auto* values = static_cast<const uint32_t*>(
-        xcb_get_property_value(reply));
-    const int count = xcb_get_property_value_length(reply) / 4;
+        for (int index = 0; index < count; ++index) {
+            const xcb_window_t child = children[index];
 
-    if (count >= 4) {
-        reservedLeft_ = static_cast<uint16_t>(
-            std::max<uint32_t>(reservedLeft_, values[0]));
-        reservedRight_ = static_cast<uint16_t>(
-            std::max<uint32_t>(reservedRight_, values[1]));
-        reservedTop_ = static_cast<uint16_t>(
-            std::max<uint32_t>(reservedTop_, values[2]));
-        reservedBottom_ = static_cast<uint16_t>(
-            std::max<uint32_t>(reservedBottom_, values[3]));
-    }
+            if (!isDockWindow(child)) {
+                continue;
+            }
 
-    std::free(reply);
+            const auto cookie = xcb_get_property(
+                connection_,
+                0,
+                child,
+                netWmStrut_,
+                XCB_ATOM_CARDINAL,
+                0,
+                4);
+            xcb_get_property_reply_t* reply =
+                xcb_get_property_reply(connection_, cookie, nullptr);
 
-    if (count >= 4) {
-        publishRootProperties();
+            if (reply == nullptr) {
+                continue;
+            }
 
-        for (const xcb_window_t desktop : desktopWindows_) {
-            fitDesktopWindow(desktop);
+            const int valuesCount = xcb_get_property_value_length(reply) / 4;
+
+            if (valuesCount >= 4) {
+                const auto* values = static_cast<const uint32_t*>(
+                    xcb_get_property_value(reply));
+                reservedLeft_ = static_cast<uint16_t>(
+                    std::max<uint32_t>(reservedLeft_, values[0]));
+                reservedRight_ = static_cast<uint16_t>(
+                    std::max<uint32_t>(reservedRight_, values[1]));
+                reservedTop_ = static_cast<uint16_t>(
+                    std::max<uint32_t>(reservedTop_, values[2]));
+                reservedBottom_ = static_cast<uint16_t>(
+                    std::max<uint32_t>(reservedBottom_, values[3]));
+            }
+
+            std::free(reply);
         }
 
-        revealManagedFrames();
+        std::free(tree);
+    } else {
+        // Fallback: read only the notifying window.
+        const auto cookie = xcb_get_property(
+            connection_,
+            0,
+            window,
+            netWmStrut_,
+            XCB_ATOM_CARDINAL,
+            0,
+            4);
+        xcb_get_property_reply_t* reply =
+            xcb_get_property_reply(connection_, cookie, nullptr);
+
+        if (reply != nullptr) {
+            const int valuesCount = xcb_get_property_value_length(reply) / 4;
+
+            if (valuesCount >= 4) {
+                const auto* values = static_cast<const uint32_t*>(
+                    xcb_get_property_value(reply));
+                reservedLeft_ = static_cast<uint16_t>(values[0]);
+                reservedRight_ = static_cast<uint16_t>(values[1]);
+                reservedTop_ = static_cast<uint16_t>(values[2]);
+                reservedBottom_ = static_cast<uint16_t>(values[3]);
+            }
+
+            std::free(reply);
+        }
     }
 
+    publishRootProperties();
+
+    for (const xcb_window_t desktop : desktopWindows_) {
+        fitDesktopWindow(desktop);
+    }
+
+    // Re-fit maximized frames to the new work area.
+    for (auto& [client, managed] : windows_) {
+        (void)client;
+
+        if (managed.minimized || !managed.maximized) {
+            continue;
+        }
+
+        const auto cookie = xcb_get_geometry(connection_, managed.frame);
+        xcb_get_geometry_reply_t* geometry =
+            xcb_get_geometry_reply(connection_, cookie, nullptr);
+
+        if (geometry == nullptr) {
+            continue;
+        }
+
+        const int16_t anchorX = static_cast<int16_t>(
+            geometry->x + static_cast<int16_t>(geometry->width / 2));
+        const int16_t anchorY = static_cast<int16_t>(
+            geometry->y + static_cast<int16_t>(geometry->height / 2));
+        std::free(geometry);
+
+        const MonitorRect area = workAreaAt(anchorX, anchorY);
+        layoutFrame(
+            managed,
+            area.x,
+            area.y,
+            area.width,
+            area.height,
+            false);
+    }
+
+    revealManagedFrames();
     xcb_flush(connection_);
+}
+
+MonitorRect WindowManager::virtualDesktopBounds() const
+{
+    const std::vector<MonitorRect> monitors = connectedMonitors();
+
+    if (monitors.empty()) {
+        return MonitorRect{
+            0,
+            0,
+            screen_ == nullptr ? uint16_t{1} : screen_->width_in_pixels,
+            screen_ == nullptr ? uint16_t{1} : screen_->height_in_pixels
+        };
+    }
+
+    int minX = monitors.front().x;
+    int minY = monitors.front().y;
+    int maxX = monitors.front().x + static_cast<int>(monitors.front().width);
+    int maxY = monitors.front().y + static_cast<int>(monitors.front().height);
+
+    for (const MonitorRect& monitor : monitors) {
+        minX = std::min(minX, static_cast<int>(monitor.x));
+        minY = std::min(minY, static_cast<int>(monitor.y));
+        maxX = std::max(
+            maxX,
+            monitor.x + static_cast<int>(monitor.width));
+        maxY = std::max(
+            maxY,
+            monitor.y + static_cast<int>(monitor.height));
+    }
+
+    return MonitorRect{
+        static_cast<int16_t>(minX),
+        static_cast<int16_t>(minY),
+        static_cast<uint16_t>(std::max(1, maxX - minX)),
+        static_cast<uint16_t>(std::max(1, maxY - minY))
+    };
 }
 
 MonitorRect WindowManager::workArea() const
 {
-    MonitorRect area{
-        0,
-        0,
-        screen_ == nullptr ? uint16_t{1} : screen_->width_in_pixels,
-        screen_ == nullptr ? uint16_t{1} : screen_->height_in_pixels
-    };
+    MonitorRect area = virtualDesktopBounds();
 
     const uint32_t horizontal =
         static_cast<uint32_t>(reservedLeft_) + reservedRight_;
@@ -269,12 +380,12 @@ MonitorRect WindowManager::workArea() const
         static_cast<uint32_t>(reservedTop_) + reservedBottom_;
 
     if (area.width > horizontal) {
-        area.x = static_cast<int16_t>(reservedLeft_);
+        area.x = static_cast<int16_t>(area.x + static_cast<int16_t>(reservedLeft_));
         area.width = static_cast<uint16_t>(area.width - horizontal);
     }
 
     if (area.height > vertical) {
-        area.y = static_cast<int16_t>(reservedTop_);
+        area.y = static_cast<int16_t>(area.y + static_cast<int16_t>(reservedTop_));
         area.height = static_cast<uint16_t>(area.height - vertical);
     }
 
@@ -334,18 +445,92 @@ MonitorRect WindowManager::workAreaAt(int16_t x, int16_t y) const
     const std::vector<MonitorRect> monitors = connectedMonitors();
     const int index = monitorIndexAt(monitors, x, y);
 
-    if (index < 0 || screen_ == nullptr) {
+    if (index < 0) {
         return workArea();
     }
 
+    const MonitorRect bounds = virtualDesktopBounds();
+    const int absoluteRight =
+        bounds.x + static_cast<int>(bounds.width);
+    const int absoluteBottom =
+        bounds.y + static_cast<int>(bounds.height);
+
     return clampedWorkArea(
         monitors[static_cast<std::size_t>(index)],
-        screen_->width_in_pixels,
-        screen_->height_in_pixels,
+        absoluteRight,
+        absoluteBottom,
         reservedLeft_,
         reservedRight_,
         reservedTop_,
         reservedBottom_);
+}
+
+void WindowManager::refreshScreenLayoutIfNeeded()
+{
+    if (!isConnected()) {
+        return;
+    }
+
+    const MonitorRect bounds = virtualDesktopBounds();
+
+    if (hasCachedVirtualBounds_ &&
+        cachedVirtualBounds_.x == bounds.x &&
+        cachedVirtualBounds_.y == bounds.y &&
+        cachedVirtualBounds_.width == bounds.width &&
+        cachedVirtualBounds_.height == bounds.height) {
+        return;
+    }
+
+    cachedVirtualBounds_ = bounds;
+    hasCachedVirtualBounds_ = true;
+    refitAfterScreenChange();
+}
+
+void WindowManager::refitAfterScreenChange()
+{
+    if (!isConnected()) {
+        return;
+    }
+
+    publishRootProperties();
+
+    for (const xcb_window_t desktop : desktopWindows_) {
+        fitDesktopWindow(desktop);
+    }
+
+    for (auto& [client, window] : windows_) {
+        (void)client;
+
+        if (window.minimized || !window.maximized) {
+            continue;
+        }
+
+        const auto cookie = xcb_get_geometry(connection_, window.frame);
+        xcb_get_geometry_reply_t* geometry =
+            xcb_get_geometry_reply(connection_, cookie, nullptr);
+
+        if (geometry == nullptr) {
+            continue;
+        }
+
+        const int16_t anchorX = static_cast<int16_t>(
+            geometry->x + static_cast<int16_t>(geometry->width / 2));
+        const int16_t anchorY = static_cast<int16_t>(
+            geometry->y + static_cast<int16_t>(geometry->height / 2));
+        std::free(geometry);
+
+        const MonitorRect area = workAreaAt(anchorX, anchorY);
+        layoutFrame(
+            window,
+            area.x,
+            area.y,
+            area.width,
+            area.height,
+            false);
+    }
+
+    revealManagedFrames();
+    xcb_flush(connection_);
 }
 
 void WindowManager::revealManagedFrames()
@@ -421,18 +606,20 @@ void WindowManager::readWindowHints(ManagedWindow& window)
         if (count > 0) {
             const uint32_t flags = values[0];
 
+            const uint16_t chrome = clientTopOffset(window.decorated);
+
             if ((flags & kSizeHintMin) != 0 && count > 6) {
                 window.minimumWidth = static_cast<uint16_t>(
                     std::max<uint32_t>(1, values[5]));
                 window.minimumHeight = static_cast<uint16_t>(std::max<uint32_t>(
-                    kTitleBarHeight + 1,
-                    values[6] + kTitleBarHeight));
+                    chrome + 1,
+                    values[6] + chrome));
             } else if ((flags & kSizeHintBase) != 0 && count > 16) {
                 window.minimumWidth = static_cast<uint16_t>(
                     std::max<uint32_t>(1, values[15]));
                 window.minimumHeight = static_cast<uint16_t>(std::max<uint32_t>(
-                    kTitleBarHeight + 1,
-                    values[16] + kTitleBarHeight));
+                    chrome + 1,
+                    values[16] + chrome));
             }
 
             if ((flags & kSizeHintMax) != 0 && count > 8 &&
@@ -440,7 +627,7 @@ void WindowManager::readWindowHints(ManagedWindow& window)
                 window.maximumWidth = static_cast<uint16_t>(
                     std::min<uint32_t>(values[7], 65535));
                 window.maximumHeight = static_cast<uint16_t>(std::min<uint32_t>(
-                    values[8] + kTitleBarHeight,
+                    values[8] + chrome,
                     65535));
             }
         }
@@ -645,6 +832,7 @@ void WindowManager::publishRootProperties()
         netDesktopViewport_,
         netWmStrut_,
         netWmStrutPartial_,
+        netWmMoveResize_,
         wmProtocols_,
         wmDeleteWindow_,
         wmTakeFocus_
@@ -737,9 +925,10 @@ void WindowManager::publishRootProperties()
         1,
         &desktopCount);
 
+    const MonitorRect bounds = virtualDesktopBounds();
     const uint32_t geometry[] = {
-        screen_->width_in_pixels,
-        screen_->height_in_pixels
+        bounds.width,
+        bounds.height
     };
 
     xcb_change_property(
@@ -904,7 +1093,9 @@ void WindowManager::publishClientState(const ManagedWindow& window)
     }
 
     if (netFrameExtents_ != XCB_ATOM_NONE) {
-        const uint32_t extents[] = {0, 0, kTitleBarHeight, 0};
+        const uint32_t top = clientTopOffset(window.decorated);
+        const uint32_t side = kFrameBorderWidth;
+        const uint32_t extents[] = {side, side, top + side, side};
 
         xcb_change_property(
             connection_,
@@ -915,6 +1106,147 @@ void WindowManager::publishClientState(const ManagedWindow& window)
             32,
             4,
             extents);
+    }
+}
+
+bool WindowManager::clientWantsTitleBar(xcb_window_t client) const
+{
+    if (!isConnected() || client == XCB_WINDOW_NONE) {
+        return true;
+    }
+
+    if (motifWmHints_ != XCB_ATOM_NONE) {
+        const auto cookie = xcb_get_property(
+            connection_,
+            0,
+            client,
+            motifWmHints_,
+            XCB_GET_PROPERTY_TYPE_ANY,
+            0,
+            5);
+        xcb_get_property_reply_t* reply =
+            xcb_get_property_reply(connection_, cookie, nullptr);
+
+        if (reply != nullptr) {
+            const int count = xcb_get_property_value_length(reply) / 4;
+
+            if (count >= 3) {
+                const auto* values = static_cast<const uint32_t*>(
+                    xcb_get_property_value(reply));
+                const bool hasDecorFlag =
+                    (values[0] & kMotifHintsDecorations) != 0;
+                const bool wants = motifWantsTitleBar(hasDecorFlag, values[2]);
+                std::free(reply);
+
+                if (hasDecorFlag) {
+                    return wants;
+                }
+            } else {
+                std::free(reply);
+            }
+        }
+    }
+
+    // GTK/Electron CSD windows advertise frame extents they draw themselves.
+    if (gtkFrameExtents_ != XCB_ATOM_NONE) {
+        const auto cookie = xcb_get_property(
+            connection_,
+            0,
+            client,
+            gtkFrameExtents_,
+            XCB_ATOM_CARDINAL,
+            0,
+            4);
+        xcb_get_property_reply_t* reply =
+            xcb_get_property_reply(connection_, cookie, nullptr);
+
+        if (reply != nullptr) {
+            const int bytes = xcb_get_property_value_length(reply);
+            std::free(reply);
+
+            if (bytes >= 16) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+void WindowManager::updateFrameBorder(
+    const ManagedWindow& window,
+    bool focused) const
+{
+    if (!isConnected() || window.frame == XCB_WINDOW_NONE) {
+        return;
+    }
+
+    const uint32_t pixel =
+        focused ? borderFocusedPixel_ : borderUnfocusedPixel_;
+    xcb_change_window_attributes(
+        connection_,
+        window.frame,
+        XCB_CW_BORDER_PIXEL,
+        &pixel);
+}
+
+void WindowManager::applyDecorationMode(ManagedWindow& window, bool decorated)
+{
+    if (!isConnected()) {
+        return;
+    }
+
+    const auto cookie = xcb_get_geometry(connection_, window.frame);
+    xcb_get_geometry_reply_t* geometry =
+        xcb_get_geometry_reply(connection_, cookie, nullptr);
+
+    if (geometry == nullptr) {
+        window.decorated = decorated;
+        return;
+    }
+
+    const uint16_t oldChrome = clientTopOffset(window.decorated);
+    const uint16_t newChrome = clientTopOffset(decorated);
+    const uint16_t clientHeight =
+        geometry->height > oldChrome
+            ? static_cast<uint16_t>(geometry->height - oldChrome)
+            : static_cast<uint16_t>(1);
+    const int16_t x = geometry->x;
+    const int16_t y = geometry->y;
+    const uint16_t width = geometry->width;
+    std::free(geometry);
+
+    window.decorated = decorated;
+
+    if (decorated) {
+        xcb_map_window(connection_, window.titleBar);
+        const uint32_t backPixel = screen_->black_pixel;
+        xcb_change_window_attributes(
+            connection_,
+            window.frame,
+            XCB_CW_BACK_PIXEL,
+            &backPixel);
+    } else {
+        xcb_unmap_window(connection_, window.titleBar);
+        const uint32_t noPixmap = XCB_NONE;
+        xcb_change_window_attributes(
+            connection_,
+            window.frame,
+            XCB_CW_BACK_PIXMAP,
+            &noPixmap);
+    }
+
+    layoutFrame(
+        window,
+        x,
+        y,
+        width,
+        frameHeightForClient(clientHeight, decorated),
+        !window.maximized);
+    publishClientState(window);
+
+    if (decorated) {
+        drawTitleBar(window.titleBar);
     }
 }
 
@@ -1341,16 +1673,17 @@ void WindowManager::sendConfigureNotify(
     uint16_t frameWidth,
     uint16_t frameHeight)
 {
+    const uint16_t chrome = clientTopOffset(window.decorated);
     xcb_configure_notify_event_t notify;
     std::memset(&notify, 0, sizeof(notify));
     notify.response_type = XCB_CONFIGURE_NOTIFY;
     notify.event = window.client;
     notify.window = window.client;
     notify.x = frameX;
-    notify.y = static_cast<int16_t>(frameY + kTitleBarHeight);
+    notify.y = static_cast<int16_t>(frameY + chrome);
     notify.width = frameWidth;
-    notify.height = frameHeight > kTitleBarHeight
-        ? static_cast<uint16_t>(frameHeight - kTitleBarHeight)
+    notify.height = frameHeight > chrome
+        ? static_cast<uint16_t>(frameHeight - chrome)
         : static_cast<uint16_t>(1);
     notify.border_width = 0;
     notify.above_sibling = XCB_WINDOW_NONE;
@@ -1398,6 +1731,18 @@ void WindowManager::setupDesktopIntegration()
     wmWindowTypeDock_ = internAtom("_NET_WM_WINDOW_TYPE_DOCK");
     wmWindowTypeDialog_ = internAtom("_NET_WM_WINDOW_TYPE_DIALOG");
     wmNormalHints_ = internAtom("WM_NORMAL_HINTS");
+    motifWmHints_ = internAtom("_MOTIF_WM_HINTS");
+    gtkFrameExtents_ = internAtom("_GTK_FRAME_EXTENTS");
+    netWmMoveResize_ = internAtom("_NET_WM_MOVERESIZE");
+
+    if (screen_ != nullptr && screen_->root_depth >= 24) {
+        // Frosted silver edges — matches dock/title glass, not the old green chrome.
+        borderFocusedPixel_ = 0x00B0B6C0;
+        borderUnfocusedPixel_ = 0x00D2D2D7;
+    } else {
+        borderFocusedPixel_ = screen_ != nullptr ? screen_->white_pixel : 0;
+        borderUnfocusedPixel_ = screen_ != nullptr ? screen_->black_pixel : 0;
+    }
 
     supportingWindow_ = xcb_generate_id(connection_);
 
@@ -1504,6 +1849,7 @@ void WindowManager::clearProtocolState()
     netDesktopViewport_ = XCB_ATOM_NONE;
     netWmStrut_ = XCB_ATOM_NONE;
     netWmStrutPartial_ = XCB_ATOM_NONE;
+    netWmMoveResize_ = XCB_ATOM_NONE;
     utf8String_ = XCB_ATOM_NONE;
     panel_ = XCB_WINDOW_NONE;
     supportingWindow_ = XCB_WINDOW_NONE;
@@ -1534,6 +1880,15 @@ void WindowManager::processClientMessage(xcb_generic_event_t* event)
     }
 
     ManagedWindow& window = iterator->second;
+
+    if (message->type == netWmMoveResize_) {
+        beginNetWmMoveResize(
+            window,
+            static_cast<int16_t>(message->data.data32[0]),
+            static_cast<int16_t>(message->data.data32[1]),
+            message->data.data32[2]);
+        return;
+    }
 
     if (message->type == netActiveWindow_) {
         if (!window.sticky && window.desktop != currentDesktop_) {

@@ -11,6 +11,7 @@ class DesktopRipple;
 
 class QCloseEvent;
 class QContextMenuEvent;
+class QMoveEvent;
 class QShowEvent;
 class QFileIconProvider;
 class QFileSystemWatcher;
@@ -25,6 +26,7 @@ public:
     ~DesktopWindow() override;
 
     static void allowSessionExit();
+    void refreshWallpaper();
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -32,6 +34,7 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void moveEvent(QMoveEvent *event) override;
 
 private:
     void setupFileArea();

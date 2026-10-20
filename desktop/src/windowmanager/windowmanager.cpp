@@ -25,6 +25,8 @@
 #include <utility>
 #include <vector>
 
+#include <cerrno>
+#include <sys/select.h>
 #include <unistd.h>
 
 namespace {
@@ -38,6 +40,8 @@ constexpr xcb_keycode_t kKeyLeft = 113;
 constexpr xcb_keycode_t kKeyRight = 114;
 constexpr xcb_keycode_t kKeyM = 58;
 constexpr xcb_keycode_t kKeyEscape = 9;
+constexpr xcb_keycode_t kKeySuperL = 133;
+constexpr xcb_keycode_t kKeySuperR = 134;
 
 void grabHotkey(
     xcb_connection_t* connection,
@@ -463,15 +467,27 @@ void paintTitleChrome(
 
     cairo_t* context = cairo_create(surface);
     const double ink = glass ? (focused ? 0.110 : 0.227) : (focused ? 0.957 : 0.545);
-    const double accentRed = focused ? 0.478 : 0.165;
-    const double accentGreen = focused ? 0.635 : 0.180;
-    const double accentBlue = focused ? 1.0 : 0.227;
 
-    cairo_set_source_rgb(context, accentRed, accentGreen, accentBlue);
-    cairo_rectangle(context, 12, (height - 14) / 2.0, 3, 14);
-    cairo_fill(context);
-    cairo_rectangle(context, 0, height - 1.0, width, 1);
-    cairo_fill(context);
+    if (glass) {
+        // Soft frosted hairline — same language as the dock glass edge.
+        if (focused) {
+            cairo_set_source_rgb(context, 0.690, 0.710, 0.745);
+        } else {
+            cairo_set_source_rgb(context, 0.820, 0.824, 0.843);
+        }
+
+        cairo_rectangle(context, 0, height - 1.0, width, 1);
+        cairo_fill(context);
+    } else {
+        const double accentRed = focused ? 0.478 : 0.165;
+        const double accentGreen = focused ? 0.635 : 0.180;
+        const double accentBlue = focused ? 1.0 : 0.227;
+        cairo_set_source_rgb(context, accentRed, accentGreen, accentBlue);
+        cairo_rectangle(context, 12, (height - 14) / 2.0, 3, 14);
+        cairo_fill(context);
+        cairo_rectangle(context, 0, height - 1.0, width, 1);
+        cairo_fill(context);
+    }
 
     const TitleBarButtons buttons = titleBarButtons(width);
     cairo_select_font_face(
@@ -682,6 +698,8 @@ bool WindowManager::acquireControl()
     controlAcquired_ = true;
     std::signal(SIGCHLD, SIG_IGN);
 
+    grabHotkey(connection_, screen_->root, 0, kKeySuperL);
+    grabHotkey(connection_, screen_->root, 0, kKeySuperR);
     grabHotkey(connection_, screen_->root, XCB_MOD_MASK_4, kKeyReturn);
     grabHotkey(connection_, screen_->root, XCB_MOD_MASK_4, kKeyE);
     grabHotkey(connection_, screen_->root, XCB_MOD_MASK_4, kKeyQ);
@@ -800,24 +818,44 @@ void WindowManager::run()
     }
 
     running_ = true;
+    refreshScreenLayoutIfNeeded();
 
     std::cout << "Eden WindowManager ativo. Pressione Ctrl+C para sair.\n";
 
     while (running_) {
-        xcb_generic_event_t* event =
-            xcb_wait_for_event(connection_);
+        refreshScreenLayoutIfNeeded();
 
-        if (event == nullptr) {
-            if (xcb_connection_has_error(connection_) != 0) {
-                std::cerr << "A conexão X11 foi encerrada.\n";
-                break;
+        const int fd = xcb_get_file_descriptor(connection_);
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(fd, &readSet);
+
+        timeval timeout{};
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 400000;
+
+        const int ready = select(fd + 1, &readSet, nullptr, nullptr, &timeout);
+
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
             }
 
-            continue;
+            std::cerr << "Falha ao aguardar eventos X11.\n";
+            break;
         }
 
-        processMessages(event);
-        std::free(event);
+        xcb_generic_event_t* event = nullptr;
+
+        while ((event = xcb_poll_for_event(connection_)) != nullptr) {
+            processMessages(event);
+            std::free(event);
+        }
+
+        if (xcb_connection_has_error(connection_) != 0) {
+            std::cerr << "A conexão X11 foi encerrada.\n";
+            break;
+        }
     }
 
     running_ = false;
@@ -825,6 +863,14 @@ void WindowManager::run()
 
 void WindowManager::stop()
 {
+    if (keyboardGrabbed_ && isConnected()) {
+        xcb_ungrab_keyboard(connection_, XCB_CURRENT_TIME);
+        keyboardGrabbed_ = false;
+        xcb_flush(connection_);
+    }
+
+    superHeld_ = false;
+    superChord_ = false;
     running_ = false;
 }
 
@@ -893,6 +939,9 @@ bool WindowManager::manageWindow(xcb_window_t client)
 
     std::free(geometry);
 
+    const bool decorated = clientWantsTitleBar(client);
+    const uint16_t chrome = clientTopOffset(decorated);
+
     const MonitorRect area = workArea();
 
     if (y < area.y) {
@@ -900,16 +949,33 @@ bool WindowManager::manageWindow(xcb_window_t client)
     }
 
     const xcb_window_t frame = xcb_generate_id(connection_);
-    const uint32_t frameValues[] = {
-        screen_->black_pixel,
-        XCB_EVENT_MASK_BUTTON_PRESS |
-            XCB_EVENT_MASK_BUTTON_RELEASE |
-            XCB_EVENT_MASK_POINTER_MOTION,
-        pointerCursor_
-    };
-    const uint32_t frameMask = XCB_CW_BACK_PIXEL |
+    // CSD clients often leave transparent margins; an opaque black frame
+    // behind them looks like the app is trapped in a black box.
+    uint32_t frameMask = XCB_CW_BORDER_PIXEL |
         XCB_CW_EVENT_MASK |
         (pointerCursor_ != XCB_NONE ? XCB_CW_CURSOR : 0);
+    uint32_t frameValues[5];
+    int frameValueCount = 0;
+
+    if (decorated) {
+        frameMask |= XCB_CW_BACK_PIXEL;
+        frameValues[frameValueCount++] = screen_->black_pixel;
+    } else {
+        frameMask |= XCB_CW_BACK_PIXMAP;
+        frameValues[frameValueCount++] = XCB_NONE;
+    }
+
+    frameValues[frameValueCount++] = borderUnfocusedPixel_;
+    frameValues[frameValueCount++] =
+        XCB_EVENT_MASK_BUTTON_PRESS |
+        XCB_EVENT_MASK_BUTTON_RELEASE |
+        XCB_EVENT_MASK_POINTER_MOTION |
+        XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT |
+        XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
+
+    if (pointerCursor_ != XCB_NONE) {
+        frameValues[frameValueCount++] = pointerCursor_;
+    }
 
     xcb_create_window(
         connection_,
@@ -919,8 +985,8 @@ bool WindowManager::manageWindow(xcb_window_t client)
         x,
         y,
         width,
-        height + kTitleBarHeight,
-        0,
+        frameHeightForClient(height, decorated),
+        kFrameBorderWidth,
         XCB_WINDOW_CLASS_INPUT_OUTPUT,
         screen_->root_visual,
         frameMask,
@@ -938,6 +1004,9 @@ bool WindowManager::manageWindow(xcb_window_t client)
             XCB_EVENT_MASK_LEAVE_WINDOW,
         pointerCursor_
     };
+    const uint32_t titleBarMask = XCB_CW_BACK_PIXEL |
+        XCB_CW_EVENT_MASK |
+        (pointerCursor_ != XCB_NONE ? XCB_CW_CURSOR : 0);
 
     xcb_create_window(
         connection_,
@@ -951,7 +1020,7 @@ bool WindowManager::manageWindow(xcb_window_t client)
         0,
         XCB_WINDOW_CLASS_INPUT_OUTPUT,
         screen_->root_visual,
-        frameMask,
+        titleBarMask,
         titleBarValues
     );
 
@@ -960,11 +1029,12 @@ bool WindowManager::manageWindow(xcb_window_t client)
         client,
         frame,
         0,
-        kTitleBarHeight
+        chrome
     );
 
     const uint32_t clientEventMask =
         XCB_EVENT_MASK_STRUCTURE_NOTIFY |
+        XCB_EVENT_MASK_PROPERTY_CHANGE |
         XCB_EVENT_MASK_BUTTON_PRESS;
 
     xcb_change_window_attributes(
@@ -989,24 +1059,39 @@ bool WindowManager::manageWindow(xcb_window_t client)
         );
     }
 
-    xcb_map_window(connection_, titleBar);
+    if (decorated) {
+        xcb_map_window(connection_, titleBar);
+    }
+
     xcb_map_window(connection_, client);
     xcb_map_window(connection_, frame);
 
-    const uint32_t titleAbove[] = {XCB_STACK_MODE_ABOVE};
-    xcb_configure_window(
-        connection_,
-        titleBar,
-        XCB_CONFIG_WINDOW_STACK_MODE,
-        titleAbove);
+    if (decorated) {
+        const uint32_t titleAbove[] = {XCB_STACK_MODE_ABOVE};
+        xcb_configure_window(
+            connection_,
+            titleBar,
+            XCB_CONFIG_WINDOW_STACK_MODE,
+            titleAbove);
+    }
 
     ManagedWindow& managed =
         windows_.emplace(client, ManagedWindow{client, frame, titleBar})
             .first->second;
 
+    managed.decorated = decorated;
     managed.desktop = currentDesktop_;
     managed.ignoreUnmap = wasMapped ? 1 : 0;
     readWindowHints(managed);
+
+    // Explicit sync after reparent so the client fills the frame content area.
+    layoutFrame(
+        managed,
+        x,
+        y,
+        width,
+        frameHeightForClient(height, managed.decorated),
+        true);
     placeTransient(managed);
 
     if (managed.sticky || managed.desktop == currentDesktop_) {
@@ -1020,7 +1105,8 @@ bool WindowManager::manageWindow(xcb_window_t client)
     xcb_flush(connection_);
 
     std::cout
-        << "Janela decorada: " << client
+        << (decorated ? "Janela decorada: " : "Janela sem barra (CSD): ")
+        << client
         << " (moldura " << frame
         << ", barra " << titleBar << ")\n";
 
@@ -1054,6 +1140,7 @@ void WindowManager::unmanageWindow(xcb_window_t client)
         xcb_ungrab_pointer(connection_, XCB_CURRENT_TIME);
     }
 
+    const bool decorated = iterator->second.decorated;
     int16_t x = 0;
     int16_t y = 0;
     const auto geometryCookie = xcb_get_geometry(connection_, frame);
@@ -1062,7 +1149,8 @@ void WindowManager::unmanageWindow(xcb_window_t client)
 
     if (geometry != nullptr) {
         x = geometry->x;
-        y = static_cast<int16_t>(geometry->y + kTitleBarHeight);
+        y = static_cast<int16_t>(
+            geometry->y + clientTopOffset(decorated));
         std::free(geometry);
     }
 
@@ -1085,6 +1173,12 @@ void WindowManager::unmanageWindow(xcb_window_t client)
 
 void WindowManager::drawTitleBar(xcb_window_t titleBar)
 {
+    const ManagedWindow* managed = findByTitleBar(titleBar);
+
+    if (managed != nullptr && !managed->decorated) {
+        return;
+    }
+
     const auto geometryCookie = xcb_get_geometry(connection_, titleBar);
 
     xcb_generic_error_t* error = nullptr;
@@ -1097,7 +1191,6 @@ void WindowManager::drawTitleBar(xcb_window_t titleBar)
         return;
     }
 
-    const ManagedWindow* managed = findByTitleBar(titleBar);
     const bool maximized = managed != nullptr && managed->maximized;
     const bool focused =
         managed != nullptr && managed->frame == focusedFrame_;
@@ -1345,10 +1438,18 @@ void WindowManager::focusWindow(ManagedWindow& window, xcb_timestamp_t time)
 
     if (changed) {
         if (ManagedWindow* previousWindow = findByFrame(previous)) {
-            drawTitleBar(previousWindow->titleBar);
+            updateFrameBorder(*previousWindow, false);
+
+            if (previousWindow->decorated) {
+                drawTitleBar(previousWindow->titleBar);
+            }
         }
 
-        drawTitleBar(window.titleBar);
+        updateFrameBorder(window, true);
+
+        if (window.decorated) {
+            drawTitleBar(window.titleBar);
+        }
     }
 
     raiseTransients(window.client);
@@ -1375,7 +1476,11 @@ void WindowManager::clearFocus()
         XCB_CURRENT_TIME);
 
     if (ManagedWindow* previousWindow = findByFrame(previous)) {
-        drawTitleBar(previousWindow->titleBar);
+        updateFrameBorder(*previousWindow, false);
+
+        if (previousWindow->decorated) {
+            drawTitleBar(previousWindow->titleBar);
+        }
     }
 
     publishClientList();
@@ -1479,30 +1584,41 @@ void WindowManager::layoutFrame(
             XCB_CONFIG_WINDOW_HEIGHT,
         frameValues);
 
-    const uint32_t titleBarValues[] = {
-        0u,
-        0u,
-        width,
-        kTitleBarHeight
-    };
+    const uint16_t chrome = clientTopOffset(window.decorated);
 
-    xcb_configure_window(
-        connection_,
-        window.titleBar,
-        XCB_CONFIG_WINDOW_X |
-            XCB_CONFIG_WINDOW_Y |
-            XCB_CONFIG_WINDOW_WIDTH |
-            XCB_CONFIG_WINDOW_HEIGHT,
-        titleBarValues);
+    if (window.decorated) {
+        const uint32_t titleBarValues[] = {
+            0u,
+            0u,
+            width,
+            kTitleBarHeight
+        };
+
+        xcb_configure_window(
+            connection_,
+            window.titleBar,
+            XCB_CONFIG_WINDOW_X |
+                XCB_CONFIG_WINDOW_Y |
+                XCB_CONFIG_WINDOW_WIDTH |
+                XCB_CONFIG_WINDOW_HEIGHT,
+            titleBarValues);
+
+        const uint32_t stackMode[] = {XCB_STACK_MODE_ABOVE};
+        xcb_configure_window(
+            connection_,
+            window.titleBar,
+            XCB_CONFIG_WINDOW_STACK_MODE,
+            stackMode);
+    }
 
     const uint16_t clientHeight =
-        height > kTitleBarHeight
-            ? static_cast<uint16_t>(height - kTitleBarHeight)
+        height > chrome
+            ? static_cast<uint16_t>(height - chrome)
             : static_cast<uint16_t>(1);
 
     const uint32_t clientValues[] = {
         0u,
-        kTitleBarHeight,
+        chrome,
         width,
         clientHeight,
         0u
@@ -1518,15 +1634,112 @@ void WindowManager::layoutFrame(
             XCB_CONFIG_WINDOW_BORDER_WIDTH,
         clientValues);
 
-    const uint32_t stackMode[] = {XCB_STACK_MODE_ABOVE};
+    sendConfigureNotify(window, x, y, width, height);
+    tightWrapFrame(window);
+}
+
+void WindowManager::tightWrapFrame(ManagedWindow& window)
+{
+    if (!isConnected() || window.maximized) {
+        return;
+    }
+
+    xcb_flush(connection_);
+
+    const auto clientCookie = xcb_get_geometry(connection_, window.client);
+    const auto frameCookie = xcb_get_geometry(connection_, window.frame);
+    xcb_get_geometry_reply_t* clientGeometry =
+        xcb_get_geometry_reply(connection_, clientCookie, nullptr);
+    xcb_get_geometry_reply_t* frameGeometry =
+        xcb_get_geometry_reply(connection_, frameCookie, nullptr);
+
+    if (clientGeometry == nullptr || frameGeometry == nullptr) {
+        std::free(clientGeometry);
+        std::free(frameGeometry);
+        return;
+    }
+
+    const uint16_t chrome = clientTopOffset(window.decorated);
+    const uint16_t contentHeight =
+        frameGeometry->height > chrome
+            ? static_cast<uint16_t>(frameGeometry->height - chrome)
+            : static_cast<uint16_t>(1);
+
+    const bool clientSmaller =
+        clientGeometry->width + 1 < frameGeometry->width ||
+        clientGeometry->height + 1 < contentHeight;
+
+    if (!clientSmaller) {
+        std::free(clientGeometry);
+        std::free(frameGeometry);
+        return;
+    }
+
+    const uint16_t wrappedWidth = std::max<uint16_t>(1, clientGeometry->width);
+    const uint16_t wrappedHeight = frameHeightForClient(
+        std::max<uint16_t>(1, clientGeometry->height),
+        window.decorated);
+
+    const uint32_t frameValues[] = {
+        packedCoordinate(frameGeometry->x),
+        packedCoordinate(frameGeometry->y),
+        wrappedWidth,
+        wrappedHeight
+    };
 
     xcb_configure_window(
         connection_,
-        window.titleBar,
-        XCB_CONFIG_WINDOW_STACK_MODE,
-        stackMode);
+        window.frame,
+        XCB_CONFIG_WINDOW_X |
+            XCB_CONFIG_WINDOW_Y |
+            XCB_CONFIG_WINDOW_WIDTH |
+            XCB_CONFIG_WINDOW_HEIGHT,
+        frameValues);
 
-    sendConfigureNotify(window, x, y, width, height);
+    if (window.decorated) {
+        const uint32_t titleBarValues[] = {
+            0u,
+            0u,
+            wrappedWidth,
+            kTitleBarHeight
+        };
+        xcb_configure_window(
+            connection_,
+            window.titleBar,
+            XCB_CONFIG_WINDOW_X |
+                XCB_CONFIG_WINDOW_Y |
+                XCB_CONFIG_WINDOW_WIDTH |
+                XCB_CONFIG_WINDOW_HEIGHT,
+            titleBarValues);
+    }
+
+    const uint32_t clientValues[] = {
+        0u,
+        chrome,
+        wrappedWidth,
+        std::max<uint16_t>(1, clientGeometry->height),
+        0u
+    };
+
+    xcb_configure_window(
+        connection_,
+        window.client,
+        XCB_CONFIG_WINDOW_X |
+            XCB_CONFIG_WINDOW_Y |
+            XCB_CONFIG_WINDOW_WIDTH |
+            XCB_CONFIG_WINDOW_HEIGHT |
+            XCB_CONFIG_WINDOW_BORDER_WIDTH,
+        clientValues);
+
+    sendConfigureNotify(
+        window,
+        frameGeometry->x,
+        frameGeometry->y,
+        wrappedWidth,
+        wrappedHeight);
+
+    std::free(clientGeometry);
+    std::free(frameGeometry);
 }
 
 void WindowManager::toggleMaximize(ManagedWindow& window)

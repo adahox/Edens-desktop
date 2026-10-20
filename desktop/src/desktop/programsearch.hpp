@@ -32,11 +32,11 @@ private:
         QString detail;
         QString haystack;
         QStringList arguments;
+        QStringList matchClasses;
         QIcon icon;
         bool terminal = false;
     };
 
-    void grabHotkey();
     void toggle();
     void openSearch();
     void reloadPrograms();
@@ -45,13 +45,13 @@ private:
     void moveSelection(int delta);
     void placeOnScreen();
     void composePlate();
+    [[nodiscard]] bool isToggleSearchMessage(const void *message) const;
 
     QLineEdit *edit_ = nullptr;
     QListWidget *list_ = nullptr;
     QVector<Program> programs_;
     QPixmap plate_;
-    uint32_t lastRelease_ = 0;
-    bool haveRelease_ = false;
+    mutable quint32 toggleSearchAtom_ = 0;
 
     static constexpr int kWidth = 560;
     static constexpr int kHeight = 460;

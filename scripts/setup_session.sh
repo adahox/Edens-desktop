@@ -20,6 +20,9 @@ trap 'rm -f "${startup}" "${session}" "${mime}"' EXIT
 cat > "${startup}" << EOF
 #!/bin/bash
 export EDEN_SESSION=1
+if [[ -x "\${HOME}/.config/eden/apply-monitors.sh" ]]; then
+    "\${HOME}/.config/eden/apply-monitors.sh" >/tmp/eden-monitors.log 2>&1 || true
+fi
 ${WINDOW_MANAGER} >/tmp/eden-wm.log 2>&1 &
 sleep 0.4
 exec ${DESKTOP}

@@ -39,6 +39,7 @@ private:
         bool maximized = false;
         bool minimized = false;
         bool sticky = false;
+        bool decorated = true;
 
         int16_t restoreX = 0;
         int16_t restoreY = 0;
@@ -63,6 +64,8 @@ private:
     void unmanageWindow(xcb_window_t client);
     void processMessages(xcb_generic_event_t* event);
     void processKeyPress(xcb_generic_event_t* event);
+    void processKeyRelease(xcb_generic_event_t* event);
+    void requestToggleSearch();
     void processButtonPress(xcb_generic_event_t* event);
     void processTitleBarPress(
         ManagedWindow& window,
@@ -80,6 +83,12 @@ private:
     void processDestroyNotify(xcb_generic_event_t* event);
     void processConfigureRequest(xcb_generic_event_t* event);
     void processClientMessage(xcb_generic_event_t* event);
+    void beginNetWmMoveResize(
+        ManagedWindow& window,
+        int16_t rootX,
+        int16_t rootY,
+        uint32_t direction);
+    bool grabPointerForOperation();
     void processExpose(xcb_generic_event_t* event);
     void drawTitleBar(xcb_window_t titleBar);
     ManagedWindow* findByTitleBar(xcb_window_t titleBar);
@@ -95,6 +104,7 @@ private:
         uint16_t width,
         uint16_t height,
         bool honorMaximum = true);
+    void tightWrapFrame(ManagedWindow& window);
     void focusWindow(ManagedWindow& window, xcb_timestamp_t time);
     void clearFocus();
     void cycleFocus(int direction);
@@ -119,6 +129,10 @@ private:
     void clearProtocolState();
     xcb_atom_t internAtom(const char* name);
     void readWindowHints(ManagedWindow& window);
+    [[nodiscard]] bool clientWantsTitleBar(xcb_window_t client) const;
+    void applyDecorationMode(ManagedWindow& window, bool decorated);
+    void updateFrameBorder(const ManagedWindow& window, bool focused) const;
+    void processPropertyNotify(xcb_generic_event_t* event);
     void placeTransient(ManagedWindow& window);
     void publishRootProperties();
     void publishClientList();
@@ -132,8 +146,11 @@ private:
     void handlePanelPress(int16_t x);
     void applyNetWmState(ManagedWindow& window, uint32_t action, xcb_atom_t atom);
     [[nodiscard]] MonitorRect workArea() const;
+    [[nodiscard]] MonitorRect virtualDesktopBounds() const;
     [[nodiscard]] std::vector<MonitorRect> connectedMonitors() const;
     [[nodiscard]] MonitorRect workAreaAt(int16_t x, int16_t y) const;
+    void refreshScreenLayoutIfNeeded();
+    void refitAfterScreenChange();
     void revealManagedFrames();
     void sendConfigureNotify(
         const ManagedWindow& window,
@@ -163,6 +180,7 @@ private:
 
     int16_t dragStartX_ = 0;
     int16_t dragStartY_ = 0;
+    xcb_timestamp_t lastPointerTime_ = XCB_CURRENT_TIME;
     int16_t frameStartX_ = 0;
     int16_t frameStartY_ = 0;
 
@@ -174,10 +192,15 @@ private:
     int16_t frameStartHeight_ = 0;
 
     uint32_t currentDesktop_ = 0;
+    bool superHeld_ = false;
+    bool superChord_ = false;
+    bool keyboardGrabbed_ = false;
     uint16_t reservedLeft_ = 0;
     uint16_t reservedRight_ = 0;
     uint16_t reservedTop_ = 0;
     uint16_t reservedBottom_ = 0;
+    MonitorRect cachedVirtualBounds_{0, 0, 0, 0};
+    bool hasCachedVirtualBounds_ = false;
 
     xcb_atom_t wmProtocols_ = XCB_ATOM_NONE;
     xcb_atom_t wmDeleteWindow_ = XCB_ATOM_NONE;
@@ -210,6 +233,11 @@ private:
     xcb_atom_t netWmStrut_ = XCB_ATOM_NONE;
     xcb_atom_t netWmStrutPartial_ = XCB_ATOM_NONE;
     xcb_atom_t utf8String_ = XCB_ATOM_NONE;
+    xcb_atom_t motifWmHints_ = XCB_ATOM_NONE;
+    xcb_atom_t gtkFrameExtents_ = XCB_ATOM_NONE;
+    xcb_atom_t netWmMoveResize_ = XCB_ATOM_NONE;
+    uint32_t borderFocusedPixel_ = 0;
+    uint32_t borderUnfocusedPixel_ = 0;
 
     bool controlAcquired_ = false;
     bool running_ = false;

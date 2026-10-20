@@ -1,7 +1,10 @@
 #include "desktop/dockbar.hpp"
+#include "desktop/desktoplaunch.hpp"
 #include "desktop/desktopwindow.hpp"
+#include "desktop/docksettings.hpp"
+#include "desktop/settingswindow.hpp"
+#include "desktop/systemmanager.hpp"
 
-#include <QAction>
 #include <QApplication>
 #include <QDateTime>
 #include <QDialog>
@@ -11,14 +14,17 @@
 #include <QVBoxLayout>
 #include <QBitmap>
 #include <QByteArray>
+#include <QGuiApplication>
 #include <QCoreApplication>
 #include <QDir>
+#include <QCloseEvent>
 #include <QEvent>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QFont>
 #include <QFontMetrics>
-#include <QMenu>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -31,6 +37,7 @@
 #include <QLinearGradient>
 #include <QShowEvent>
 
+#include <algorithm>
 #include <cmath>
 
 #include <cairo/cairo.h>
@@ -266,7 +273,8 @@ bool launchDebugger()
 
 bool launchSettings()
 {
-    return false;
+    SettingsWindow::open();
+    return true;
 }
 
 QPixmap spacesIcon()
@@ -486,6 +494,204 @@ void requestDesktop(uint32_t desktop)
     xcb_flush(connection);
 }
 
+class DockPopup final : public QWidget
+{
+public:
+    struct Row
+    {
+        QString text;
+        bool selectable = true;
+        bool marked = false;
+    };
+
+    explicit DockPopup(QVector<Row> rows)
+        : QWidget(nullptr)
+        , rows_(std::move(rows))
+    {
+        setWindowFlags(
+            Qt::Popup |
+            Qt::FramelessWindowHint |
+            Qt::NoDropShadowWindowHint |
+            Qt::WindowStaysOnTopHint);
+        setMouseTracking(true);
+        setCursor(Qt::PointingHandCursor);
+
+        QFont itemFont = font();
+        itemFont.setPixelSize(13);
+        setFont(itemFont);
+        setFixedSize(layoutSize());
+
+        QPainterPath path;
+        path.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12, 12);
+        setMask(QRegion(path.toFillPolygon().toPolygon()));
+    }
+
+    int execNear(const QPoint &globalTopCenter, const QRect &screen)
+    {
+        const QSize hint = size();
+        const int minimumX = screen.left() + 8;
+        const int maximumX = std::max(minimumX, screen.right() - hint.width() - 8);
+        const int x = std::clamp(globalTopCenter.x() - hint.width() / 2, minimumX, maximumX);
+        const int y = std::max(screen.top() + 8, globalTopCenter.y() - hint.height() - 10);
+        move(x, y);
+        show();
+        raise();
+
+        QEventLoop loop;
+        loop_ = &loop;
+        loop.exec();
+        loop_ = nullptr;
+        return chosen_;
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(QColor(QStringLiteral("#D2D2D7")), 1));
+        painter.setBrush(QColor(QStringLiteral("#F5F5F7")));
+        painter.drawRoundedRect(rect().adjusted(0, 0, -1, -1), 12, 12);
+
+        const bool reserveMark = std::any_of(rows_.cbegin(), rows_.cend(), [](const Row &row) {
+            return row.marked;
+        });
+
+        for (int index = 0; index < rows_.size(); ++index) {
+            const Row &row = rows_.at(index);
+            const QRect box = rowRect(index);
+
+            if (!row.selectable) {
+                painter.setPen(QColor(QStringLiteral("#6E6E73")));
+                QFont caption = font();
+                caption.setWeight(QFont::DemiBold);
+                painter.setFont(caption);
+                painter.drawText(box.adjusted(12, 0, -10, -1), Qt::AlignVCenter | Qt::AlignLeft, row.text);
+                painter.setFont(font());
+                painter.setPen(QPen(QColor(QStringLiteral("#D2D2D7")), 1));
+                painter.drawLine(box.left() + 10, box.bottom(), box.right() - 10, box.bottom());
+                continue;
+            }
+
+            if (index == hover_) {
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor(QStringLiteral("#0A84FF")));
+                painter.drawRoundedRect(box.adjusted(2, 2, -2, -2), 8, 8);
+                painter.setPen(Qt::white);
+            } else {
+                painter.setPen(QColor(QStringLiteral("#1C1C1E")));
+            }
+
+            const QString prefix = row.marked
+                ? QStringLiteral("✓   ")
+                : (reserveMark ? QStringLiteral("     ") : QString());
+            painter.drawText(box.adjusted(12, 0, -10, 0), Qt::AlignVCenter | Qt::AlignLeft, prefix + row.text);
+        }
+    }
+
+    void mouseMoveEvent(QMouseEvent *event) override
+    {
+        const int next = rowAt(event->position().toPoint());
+
+        if (next == hover_) {
+            return;
+        }
+
+        hover_ = next;
+        update();
+    }
+
+    void mouseReleaseEvent(QMouseEvent *event) override
+    {
+        if (event->button() != Qt::LeftButton) {
+            return;
+        }
+
+        const int index = rowAt(event->position().toPoint());
+
+        if (index < 0) {
+            return;
+        }
+
+        chosen_ = index;
+        close();
+    }
+
+    void keyPressEvent(QKeyEvent *event) override
+    {
+        if (event->key() == Qt::Key_Escape) {
+            close();
+            return;
+        }
+
+        QWidget::keyPressEvent(event);
+    }
+
+    void closeEvent(QCloseEvent *event) override
+    {
+        QWidget::closeEvent(event);
+
+        if (loop_ != nullptr) {
+            loop_->quit();
+        }
+    }
+
+private:
+    [[nodiscard]] QSize layoutSize() const
+    {
+        const QFontMetrics metrics(font());
+        int width = 168;
+
+        for (const Row &row : rows_) {
+            width = std::max(width, metrics.horizontalAdvance(row.text) + (row.marked ? 64 : 48));
+        }
+
+        int height = 8;
+
+        for (const Row &row : rows_) {
+            height += row.selectable ? 34 : 32;
+        }
+
+        return {width, height};
+    }
+
+    [[nodiscard]] QRect rowRect(int index) const
+    {
+        int y = 4;
+
+        for (int row = 0; row < index; ++row) {
+            y += rows_.at(row).selectable ? 34 : 32;
+        }
+
+        const int height = rows_.at(index).selectable ? 34 : 32;
+        return QRect(4, y, width() - 8, height);
+    }
+
+    [[nodiscard]] int rowAt(const QPoint &position) const
+    {
+        for (int index = 0; index < rows_.size(); ++index) {
+            if (!rows_.at(index).selectable || !rowRect(index).contains(position)) {
+                continue;
+            }
+
+            return index;
+        }
+
+        return -1;
+    }
+
+    QVector<Row> rows_;
+    QEventLoop *loop_ = nullptr;
+    int hover_ = -1;
+    int chosen_ = -1;
+};
+
+int runDockPopup(const QVector<DockPopup::Row> &rows, const QPoint &globalTopCenter, const QRect &screen)
+{
+    DockPopup popup(rows);
+    return popup.execNear(globalTopCenter, screen);
+}
+
 } // namespace
 
 DockBar::DockBar(QWidget *parent)
@@ -502,6 +708,8 @@ DockBar::DockBar(QWidget *parent)
     setMouseTracking(true);
     setCursor(Qt::PointingHandCursor);
 
+    settings_ = EdenDock::load();
+    syncLabelFont();
     buildEntries();
 
     auto *keepOnTop = new QTimer(this);
@@ -531,6 +739,35 @@ DockBar *DockBar::instance()
     return active_;
 }
 
+EdenDock::Settings DockBar::settings() const
+{
+    return settings_;
+}
+
+void DockBar::syncLabelFont()
+{
+    QFont labelFont = font();
+    labelFont.setPointSize(settings_.fontSize);
+    labelFont.setWeight(QFont::DemiBold);
+    setFont(labelFont);
+}
+
+void DockBar::applySettings(const EdenDock::Settings &settings)
+{
+    settings_ = settings;
+    settings_.clamp();
+    syncLabelFont();
+    glass_ = QPixmap();
+    composed_ = QPixmap();
+    relayout();
+    publishDockStrut();
+}
+
+int DockBar::labelHeight() const
+{
+    return std::max(24, settings_.fontSize + 16);
+}
+
 int DockBar::findEntry(const QString &label) const
 {
     for (int index = 0; index < entries_.size(); ++index) {
@@ -554,6 +791,17 @@ int DockBar::separatorIndex() const
     return entries_.size();
 }
 
+bool DockBar::anyLoading() const
+{
+    for (const Entry &entry : entries_) {
+        if (entry.loading) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void DockBar::beginLoading(int index)
 {
     if (index < 0 || index >= entries_.size() || entries_.at(index).separator) {
@@ -562,18 +810,33 @@ void DockBar::beginLoading(int index)
 
     entries_[index].loading = true;
     entries_[index].launched = false;
-    entries_[index].loadingUntil =
-        QDateTime::currentMSecsSinceEpoch() + kLoadingMs;
+    entries_[index].loadingStarted = QDateTime::currentMSecsSinceEpoch();
 
     if (!loadingTimer_->isActive()) {
-        loadingPhase_ = 0.0;
         loadingTimer_->start(16);
     }
 
-    relayout();
+    updateMask();
+    update();
 }
 
-void DockBar::notifyOpening(const QString &label, const QIcon &icon)
+void DockBar::rememberPid(int index, qint64 pid)
+{
+    if (index < 0 || index >= entries_.size() || pid <= 0) {
+        return;
+    }
+
+    if (!entries_[index].pids.contains(pid)) {
+        entries_[index].pids.push_back(pid);
+    }
+}
+
+void DockBar::notifyOpening(
+    const QString &label,
+    const QIcon &icon,
+    const QStringList &matchClasses,
+    qint64 pid,
+    const QStringList &matchTitles)
 {
     if (label.trimmed().isEmpty()) {
         return;
@@ -582,6 +845,21 @@ void DockBar::notifyOpening(const QString &label, const QIcon &icon)
     const int existing = findEntry(label);
 
     if (existing >= 0) {
+        for (const QString &hint : matchClasses) {
+            if (!hint.isEmpty() &&
+                !entries_[existing].matchClasses.contains(hint, Qt::CaseInsensitive)) {
+                entries_[existing].matchClasses.push_back(hint);
+            }
+        }
+
+        for (const QString &hint : matchTitles) {
+            if (!hint.isEmpty() &&
+                !entries_[existing].matchTitles.contains(hint, Qt::CaseInsensitive)) {
+                entries_[existing].matchTitles.push_back(hint);
+            }
+        }
+
+        rememberPid(existing, pid);
         beginLoading(existing);
         return;
     }
@@ -589,44 +867,55 @@ void DockBar::notifyOpening(const QString &label, const QIcon &icon)
     Entry entry;
     entry.label = label.trimmed();
     entry.ephemeral = true;
-    entry.icon = icon.pixmap(kIconHover, kIconHover);
+    entry.matchClasses = matchClasses;
+    entry.matchTitles = matchTitles;
+    entry.icon = icon.pixmap(settings_.iconHoverSize, settings_.iconHoverSize);
 
     if (entry.icon.isNull()) {
-        entry.icon = QPixmap(kIconHover, kIconHover);
-        entry.icon.fill(QColor(80, 110, 160));
+        QPixmap fallback(settings_.iconHoverSize, settings_.iconHoverSize);
+        fallback.fill(Qt::transparent);
+        QPainter painter(&fallback);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setBrush(QColor(90, 120, 170));
+        painter.setPen(Qt::NoPen);
+        painter.drawRoundedRect(fallback.rect().adjusted(6, 6, -6, -6), 14, 14);
+        entry.icon = fallback;
     }
 
     const int insertAt = separatorIndex();
     entries_.insert(insertAt, entry);
+    rememberPid(insertAt, pid);
+    relayout();
     beginLoading(insertAt);
 }
 
 void DockBar::tickLoading()
 {
-    loadingPhase_ += 0.22;
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    bool anyLoading = false;
+    bool finished = false;
 
-    for (int index = 0; index < entries_.size(); ++index) {
-        Entry &entry = entries_[index];
-
+    for (Entry &entry : entries_) {
         if (!entry.loading) {
             continue;
         }
 
-        anyLoading = true;
-
-        if (now >= entry.loadingUntil) {
+        if (now - entry.loadingStarted >= kBounceMs) {
             entry.loading = false;
             entry.launched = true;
+            finished = true;
         }
     }
 
-    if (!anyLoading) {
+    if (!anyLoading()) {
         loadingTimer_->stop();
+        updateMask();
     }
 
-    relayout();
+    if (finished) {
+        updateMask();
+    }
+
+    update();
 }
 
 void DockBar::buildEntries()
@@ -636,20 +925,142 @@ void DockBar::buildEntries()
         const char *icon;
         bool separator;
         bool (*launch)();
+        QStringList matchClasses;
+        QStringList matchTitles;
+        bool closeable;
     } specs[] = {
-        {"Arquivos", "eden-launcher.svg", false, launchFiles},
-        {"Terminal", "eden-terminal.svg", false, launchTerminal},
-        {"Editor", "eden-ide.svg", false, launchIde},
-        {"Git", "eden-git.svg", false, launchGit},
-        {"Docker", "eden-docker.svg", false, launchDocker},
-        {"Banco", "eden-database.svg", false, launchDatabase},
-        {"API", "eden-api.svg", false, launchApi},
-        {"Pacotes", "eden-package.svg", false, launchPackage},
-        {"Depurador", "eden-debugger.svg", false, launchDebugger},
-        {"", "", true, nullptr},
-        {"Áreas", "", false, nullptr},
-        {"Ajustes", "eden-settings.svg", false, launchSettings},
-        {"Compilar", "", false, nullptr}
+        {
+            "Arquivos",
+            "eden-launcher.svg",
+            false,
+            launchFiles,
+            {
+                QStringLiteral("edens"),
+                QStringLiteral("Edens"),
+                QStringLiteral("eden-file-manager")
+            },
+            {QStringLiteral("Eden File Manager")},
+            true
+        },
+        {
+            "Terminal",
+            "eden-terminal.svg",
+            false,
+            launchTerminal,
+            {
+                QStringLiteral("gnome-terminal"),
+                QStringLiteral("Gnome-terminal"),
+                QStringLiteral("xfce4-terminal"),
+                QStringLiteral("mate-terminal"),
+                QStringLiteral("xterm"),
+                QStringLiteral("XTerm"),
+                QStringLiteral("kitty"),
+                QStringLiteral("Alacritty")
+            },
+            {},
+            true
+        },
+        {
+            "Editor",
+            "eden-ide.svg",
+            false,
+            launchIde,
+            {
+                QStringLiteral("code"),
+                QStringLiteral("Code"),
+                QStringLiteral("codium"),
+                QStringLiteral("VSCodium"),
+                QStringLiteral("gnome-text-editor"),
+                QStringLiteral("gedit"),
+                QStringLiteral("xed"),
+                QStringLiteral("mousepad"),
+                QStringLiteral("kate"),
+                QStringLiteral("Kate")
+            },
+            {},
+            true
+        },
+        {
+            "Git",
+            "eden-git.svg",
+            false,
+            launchGit,
+            {QStringLiteral("git-gui"), QStringLiteral("GitGui"), QStringLiteral("gitk")},
+            {},
+            true
+        },
+        {
+            "Docker",
+            "eden-docker.svg",
+            false,
+            launchDocker,
+            {QStringLiteral("docker"), QStringLiteral("Docker Desktop")},
+            {},
+            true
+        },
+        {
+            "Banco",
+            "eden-database.svg",
+            false,
+            launchDatabase,
+            {
+                QStringLiteral("dbeaver"),
+                QStringLiteral("DBeaver"),
+                QStringLiteral("mysql-workbench"),
+                QStringLiteral("MySQLWorkbench")
+            },
+            {},
+            true
+        },
+        {
+            "API",
+            "eden-api.svg",
+            false,
+            launchApi,
+            {
+                QStringLiteral("insomnia"),
+                QStringLiteral("Insomnia"),
+                QStringLiteral("postman"),
+                QStringLiteral("Postman")
+            },
+            {},
+            true
+        },
+        {
+            "Pacotes",
+            "eden-package.svg",
+            false,
+            launchPackage,
+            {
+                QStringLiteral("synaptic"),
+                QStringLiteral("Synaptic"),
+                QStringLiteral("gnome-software"),
+                QStringLiteral("GnomeSoftware")
+            },
+            {},
+            true
+        },
+        {
+            "Depurador",
+            "eden-debugger.svg",
+            false,
+            launchDebugger,
+            {QStringLiteral("gdbgui"), QStringLiteral("Gdbgui")},
+            {},
+            true
+        },
+        {"", "", true, nullptr, {}, {}, false},
+        {"Áreas", "", false, nullptr, {}, {}, false},
+        {
+            "Ajustes",
+            "eden-settings.svg",
+            false,
+            launchSettings,
+            {},
+            {QStringLiteral("Ajustes do Sistema")},
+            true
+        },
+        {"Compilar", "", false, nullptr, {}, {}, false}
     };
 
     entries_.reserve(static_cast<int>(std::size(specs)));
@@ -659,12 +1070,17 @@ void DockBar::buildEntries()
         entry.label = QString::fromUtf8(spec.label);
         entry.separator = spec.separator;
         entry.launch = spec.launch;
+        entry.matchClasses = spec.matchClasses;
+        entry.matchTitles = spec.matchTitles;
+        entry.closeable = spec.closeable;
 
         if (entry.label == QStringLiteral("Áreas")) {
             entry.desktopMenu = true;
+            entry.closeable = false;
             entry.icon = spacesIcon();
         } else if (entry.label == QStringLiteral("Compilar")) {
             entry.buildsDesktop = true;
+            entry.closeable = false;
             entry.icon = buildIcon();
         } else if (!entry.separator) {
             entry.icon = loadIcon(QString::fromUtf8(spec.icon));
@@ -678,6 +1094,7 @@ void DockBar::place(const QRect &screen)
 {
     screen_ = screen;
     relayout();
+    publishDockStrut();
 }
 
 int DockBar::iconSize(int index) const
@@ -686,28 +1103,41 @@ int DockBar::iconSize(int index) const
         return 0;
     }
 
-    int size = index == hover_ ? kIconHover : kIconRest;
+    return index == hover_ ? settings_.iconHoverSize : settings_.iconSize;
+}
 
-    if (entries_.at(index).loading) {
-        size += static_cast<int>(
-            3.0 * std::abs(std::sin(loadingPhase_ * 1.6 + index * 0.7)));
+double DockBar::bounceProgress(int index) const
+{
+    if (index < 0 || index >= entries_.size() || !entries_.at(index).loading) {
+        return 1.0;
     }
 
-    return size;
+    const qint64 elapsed =
+        QDateTime::currentMSecsSinceEpoch() - entries_.at(index).loadingStarted;
+    return std::clamp(elapsed / static_cast<double>(kBounceMs), 0.0, 1.0);
 }
 
 int DockBar::bounceOffset(int index) const
 {
-    if (index < 0 || index >= entries_.size() || !entries_.at(index).loading) {
+    const double progress = bounceProgress(index);
+
+    if (progress >= 1.0) {
         return 0;
     }
 
-    return static_cast<int>(
-        -10.0 * std::abs(std::sin(loadingPhase_ * 2.4 + index * 0.55)));
+    // Três pulos estilo Dock do macOS, com amplitude caindo.
+    const double segment = progress * 3.0;
+    const int bounceIndex = std::min(2, static_cast<int>(segment));
+    const double local = segment - bounceIndex;
+    const double amplitude = kBouncePeak * std::pow(0.55, bounceIndex);
+    return static_cast<int>(-amplitude * std::sin(local * 3.14159265358979323846));
 }
 
 void DockBar::relayout()
 {
+    const int iconHover = settings_.iconHoverSize;
+    const int gap = settings_.iconGap;
+    const int labelH = labelHeight();
     int contentWidth = kPadX;
 
     for (int index = 0; index < entries_.size(); ++index) {
@@ -716,22 +1146,22 @@ void DockBar::relayout()
             continue;
         }
 
-        contentWidth += kIconHover + kGap;
+        contentWidth += iconHover + gap;
     }
 
-    contentWidth += kPadX - kGap;
+    contentWidth += kPadX - gap;
 
-    const int barHeight = kPadY + kIconHover + 8 + kPadY;
-    const int totalHeight = kLabelHeight + kLabelGap + barHeight;
+    const int barHeight = kPadY + iconHover + 8 + kPadY;
+    const int totalHeight = labelH + kLabelGap + barHeight;
     const int x = screen_.x() + qMax(0, (screen_.width() - contentWidth) / 2);
-    const int y = screen_.y() + screen_.height() - kBottomMargin - totalHeight;
+    const int y = screen_.y() + screen_.height() - settings_.bottomMargin - totalHeight;
 
     const QRect nextGeometry(x, y, qMax(contentWidth, 1), totalHeight);
 
     if (geometry() != nextGeometry) {
         setGeometry(nextGeometry);
     }
-    barRect_ = QRect(0, kLabelHeight + kLabelGap, width(), barHeight);
+    barRect_ = QRect(0, labelH + kLabelGap, width(), barHeight);
 
     iconRects_.resize(entries_.size());
     int cursor = kPadX;
@@ -743,12 +1173,12 @@ void DockBar::relayout()
             continue;
         }
 
-        const int slot = kIconHover;
+        const int slot = iconHover;
         const int size = iconSize(index);
         const int iconX = cursor + (slot - size) / 2;
-        const int iconY = barRect_.bottom() - kPadY - 8 - size + bounceOffset(index);
+        const int iconY = barRect_.bottom() - kPadY - 8 - size;
         iconRects_[index] = QRect(iconX, iconY, size, size);
-        cursor += slot + kGap;
+        cursor += slot + gap;
     }
 
     labelRect_ = QRect();
@@ -758,7 +1188,7 @@ void DockBar::relayout()
         const int textWidth = metrics.horizontalAdvance(entries_.at(hover_).label) + 18;
         const QRect icon = iconRects_.at(hover_);
         const int labelX = qBound(4, icon.center().x() - textWidth / 2, width() - textWidth - 4);
-        labelRect_ = QRect(labelX, 0, textWidth, kLabelHeight);
+        labelRect_ = QRect(labelX, 0, textWidth, labelH);
     }
 
     updateMask();
@@ -769,6 +1199,13 @@ void DockBar::relayout()
 
     compose();
     update();
+}
+
+QPainterPath DockBar::barPath() const
+{
+    QPainterPath path;
+    path.addRoundedRect(barRect_.adjusted(0, 0, -1, -1), 22, 22);
+    return path;
 }
 
 void DockBar::compose()
@@ -787,15 +1224,16 @@ void DockBar::compose()
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     painter.scale(scale, scale);
 
+    // Only paint inside the rounded capsule — filling the full rect left a
+    // dark rectangular “frame” around the dock when windows sat behind it.
+    const QPainterPath capsule = barPath();
+    painter.setClipPath(capsule);
+
     if (!backdrop_.isNull()) {
         painter.drawPixmap(0, 0, backdrop_);
     } else {
-        painter.fillRect(rect(), QColor(32, 32, 40));
+        painter.fillPath(capsule, QColor(236, 236, 240));
     }
-
-    QPainterPath capsule;
-    capsule.addRoundedRect(barRect_.adjusted(0, 0, -1, -1), 22, 22);
-    painter.setClipPath(capsule);
 
     if (!glass_.isNull()) {
         painter.drawPixmap(barRect_.topLeft(), glass_);
@@ -813,6 +1251,7 @@ void DockBar::showEvent(QShowEvent *)
 {
     refreshGlass();
     compose();
+    publishDockStrut();
     update();
 }
 
@@ -873,7 +1312,7 @@ void DockBar::refreshGlass()
     glass_ = QPixmap::fromImage(plate);
 
     backdrop_ = QPixmap(size());
-    backdrop_.fill(QColor(32, 32, 40));
+    backdrop_.fill(Qt::transparent);
 
     if (source.isNull()) {
         return;
@@ -900,13 +1339,124 @@ void DockBar::refreshGlass()
 
 void DockBar::updateMask()
 {
-    QRegion region(barRect_.adjusted(0, -2, 0, 2));
-
-    if (!labelRect_.isNull()) {
-        region = region.united(QRegion(labelRect_.adjusted(-3, -3, 3, 3)));
+    if (width() <= 0 || height() <= 0) {
+        clearMask();
+        return;
     }
 
-    setMask(region);
+    QBitmap bitmap(size());
+    bitmap.fill(Qt::color0);
+
+    QPainter painter(&bitmap);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(Qt::color1);
+    painter.drawRoundedRect(barRect_.adjusted(0, 0, -1, -1), 22, 22);
+
+    if (!labelRect_.isNull()) {
+        painter.drawRoundedRect(labelRect_.adjusted(-3, -3, 3, 3), 8, 8);
+    }
+
+    if (anyLoading()) {
+        for (int index = 0; index < iconRects_.size(); ++index) {
+            if (!entries_.at(index).loading) {
+                continue;
+            }
+
+            painter.drawRect(
+                iconRects_.at(index).adjusted(-2, -(kBouncePeak + 4), 2, 2));
+        }
+    }
+
+    painter.end();
+    setMask(bitmap);
+}
+
+void DockBar::publishDockStrut()
+{
+    auto *native = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
+
+    if (native == nullptr || native->connection() == nullptr || !isVisible()) {
+        return;
+    }
+
+    xcb_connection_t *connection = native->connection();
+    const xcb_window_t window = static_cast<xcb_window_t>(winId());
+    const xcb_atom_t typeProperty = internAtom(connection, "_NET_WM_WINDOW_TYPE");
+    const xcb_atom_t dockType = internAtom(connection, "_NET_WM_WINDOW_TYPE_DOCK");
+
+    if (typeProperty != XCB_ATOM_NONE && dockType != XCB_ATOM_NONE) {
+        xcb_change_property(
+            connection,
+            XCB_PROP_MODE_REPLACE,
+            window,
+            typeProperty,
+            XCB_ATOM_ATOM,
+            32,
+            1,
+            &dockType);
+    }
+
+    // Reserve from the top of the dock capsule to the bottom of the root.
+    const QRect globalBar(
+        mapToGlobal(barRect_.topLeft()),
+        barRect_.size());
+    const xcb_setup_t *setup = xcb_get_setup(connection);
+    const xcb_screen_t *xscreen =
+        setup == nullptr ? nullptr : xcb_setup_roots_iterator(setup).data;
+    const int rootHeight =
+        xscreen == nullptr ? screen_.height() : xscreen->height_in_pixels;
+    const int bottomReserve = std::max(0, rootHeight - globalBar.top());
+
+    const xcb_atom_t strut = internAtom(connection, "_NET_WM_STRUT");
+    const uint32_t reserved[] = {0, 0, 0, static_cast<uint32_t>(bottomReserve)};
+
+    if (strut != XCB_ATOM_NONE) {
+        xcb_change_property(
+            connection,
+            XCB_PROP_MODE_REPLACE,
+            window,
+            strut,
+            XCB_ATOM_CARDINAL,
+            32,
+            4,
+            reserved);
+    }
+
+    const xcb_atom_t partial = internAtom(connection, "_NET_WM_STRUT_PARTIAL");
+    const uint32_t left = static_cast<uint32_t>(std::max(0, globalBar.left()));
+    const uint32_t right = static_cast<uint32_t>(
+        std::max(0, globalBar.right()));
+    const uint32_t partialValues[] = {
+        0,
+        0,
+        0,
+        static_cast<uint32_t>(bottomReserve),
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        left,
+        right};
+
+    if (partial != XCB_ATOM_NONE) {
+        xcb_change_property(
+            connection,
+            XCB_PROP_MODE_REPLACE,
+            window,
+            partial,
+            XCB_ATOM_CARDINAL,
+            32,
+            12,
+            partialValues);
+    }
+
+    // Remap so the window manager re-reads struts and updates the work area.
+    xcb_unmap_window(connection, window);
+    xcb_map_window(connection, window);
+    xcb_flush(connection);
 }
 
 int DockBar::entryAt(const QPoint &position) const
@@ -919,7 +1469,9 @@ int DockBar::entryAt(const QPoint &position) const
             continue;
         }
 
-        const int extra = (kIconHover - iconRects_.at(index).width()) / 2 + kGap / 2;
+        const int extra =
+            (settings_.iconHoverSize - iconRects_.at(index).width()) / 2 +
+            settings_.iconGap / 2;
         const QRect hit = iconRects_.at(index).adjusted(-extra, -24, extra, 18);
 
         if (!hit.contains(position)) {
@@ -963,26 +1515,16 @@ void DockBar::paintEvent(QPaintEvent *)
 
         painter.setPen(Qt::NoPen);
 
+        const QRect drawn = entry.loading ? rect.translated(0, bounceOffset(index)) : rect;
+
         if (!entry.icon.isNull()) {
-            painter.drawPixmap(rect, entry.icon);
+            painter.drawPixmap(drawn, entry.icon);
         } else {
             painter.setBrush(QColor(80, 110, 160));
-            painter.drawRoundedRect(rect, 12, 12);
+            painter.drawRoundedRect(drawn, 12, 12);
         }
 
-        if (entry.loading) {
-            QPainterPath clip;
-            clip.addRoundedRect(rect, 12, 12);
-            painter.save();
-            painter.setClipPath(clip);
-            painter.fillRect(rect, QColor(0, 0, 0, 90));
-            painter.setBrush(Qt::NoBrush);
-            painter.setPen(QPen(QColor(255, 255, 255, 230), 2.4, Qt::SolidLine, Qt::RoundCap));
-            const QRect arc = rect.adjusted(10, 10, -10, -10);
-            const int start = static_cast<int>(-loadingPhase_ * 280) * 16;
-            painter.drawArc(arc, start, 110 * 16);
-            painter.restore();
-        } else if (entry.launched) {
+        if (entry.launched && !entry.loading) {
             painter.setBrush(QColor(245, 245, 247));
             painter.drawEllipse(QPoint(rect.center().x(), barRect_.bottom() - 8), 2, 2);
         }
@@ -1021,27 +1563,215 @@ void DockBar::leaveEvent(QEvent *)
     relayout();
 }
 
-void DockBar::mousePressEvent(QMouseEvent *event)
+bool DockBar::activateEntry(int index)
 {
-    if (event->button() != Qt::LeftButton) {
+    if (index < 0 || index >= entries_.size()) {
+        return false;
+    }
+
+    const Entry &entry = entries_.at(index);
+
+    if (EdenDesktop::activateMatching(
+            entry.matchClasses,
+            entry.pids,
+            entry.matchTitles)) {
+        return true;
+    }
+
+    if (entry.label == QStringLiteral("Ajustes")) {
+        if (SettingsWindow *settings = SettingsWindow::instance()) {
+            if (settings->isMinimized()) {
+                settings->showNormal();
+            }
+
+            settings->show();
+            settings->raise();
+            settings->activateWindow();
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void DockBar::activateOrLaunch(int index)
+{
+    if (index < 0 || index >= entries_.size()) {
         return;
     }
 
+    Entry &entry = entries_[index];
+
+    if (entry.desktopMenu || entry.buildsDesktop || entry.separator) {
+        return;
+    }
+
+    if (activateEntry(index)) {
+        entry.launched = true;
+        entry.loading = false;
+        update();
+        return;
+    }
+
+    if (entry.launch == nullptr) {
+        return;
+    }
+
+    if (entry.launch()) {
+        beginLoading(index);
+    }
+}
+
+void DockBar::noteClosed(const QString &label)
+{
+    const int index = findEntry(label);
+
+    if (index < 0) {
+        return;
+    }
+
+    Entry &entry = entries_[index];
+    entry.loading = false;
+    entry.launched = false;
+    entry.pids.clear();
+
+    if (!anyLoading()) {
+        loadingTimer_->stop();
+    }
+
+    if (entry.ephemeral) {
+        entries_.removeAt(index);
+
+        if (hover_ == index) {
+            hover_ = -1;
+        } else if (hover_ > index) {
+            --hover_;
+        }
+
+        relayout();
+        return;
+    }
+
+    updateMask();
+    update();
+}
+
+void DockBar::closeEntry(int index)
+{
+    if (index < 0 || index >= entries_.size()) {
+        return;
+    }
+
+    Entry &entry = entries_[index];
+
+    if (!entry.closeable) {
+        return;
+    }
+
+    if (entry.label == QStringLiteral("Gerenciador do Sistema")) {
+        if (SystemManager *manager = SystemManager::instance()) {
+            manager->dismiss();
+        } else {
+            noteClosed(QStringLiteral("Gerenciador do Sistema"));
+        }
+
+        return;
+    }
+
+    bool closed = false;
+
+    if (entry.label == QStringLiteral("Ajustes")) {
+        if (SettingsWindow *settings = SettingsWindow::instance()) {
+            settings->close();
+            closed = true;
+        }
+    }
+
+    closed = EdenDesktop::closeMatching(
+                 entry.matchClasses,
+                 entry.pids,
+                 entry.matchTitles) ||
+             closed;
+
+    if (!closed) {
+        return;
+    }
+
+    entry.loading = false;
+    entry.launched = false;
+    entry.pids.clear();
+
+    if (!anyLoading()) {
+        loadingTimer_->stop();
+    }
+
+    if (entry.ephemeral) {
+        entries_.removeAt(index);
+        hover_ = -1;
+        relayout();
+        return;
+    }
+
+    updateMask();
+    update();
+}
+
+void DockBar::showEntryMenu(int index)
+{
+    if (index < 0 || index >= entries_.size()) {
+        return;
+    }
+
+    const Entry &entry = entries_.at(index);
+
+    if (entry.separator || entry.desktopMenu || entry.buildsDesktop || !entry.closeable) {
+        return;
+    }
+
+    const QString label = entry.label;
+    hover_ = -1;
+    relayout();
+    const QPoint anchor = mapToGlobal(
+        QPoint(iconRects_.value(index).center().x(), barRect_.top()));
+    const int chosen = runDockPopup(
+        {
+            {label, false, false},
+            {QStringLiteral("Fechar o aplicativo"), true, false}
+        },
+        anchor,
+        screen_);
+
+    if (chosen == 1) {
+        const int current = findEntry(label);
+
+        if (current >= 0) {
+            closeEntry(current);
+        }
+    }
+}
+
+void DockBar::mousePressEvent(QMouseEvent *event)
+{
     const int index = entryAt(event->position().toPoint());
 
     if (index < 0) {
         return;
     }
 
-    if (entries_.at(index).desktopMenu ||
-        entries_.at(index).buildsDesktop ||
-        entries_.at(index).launch == nullptr) {
+    if (event->button() == Qt::RightButton) {
+        showEntryMenu(index);
         return;
     }
 
-    if (entries_[index].launch()) {
-        beginLoading(index);
+    if (event->button() != Qt::LeftButton) {
+        return;
     }
+
+    if (entries_.at(index).desktopMenu || entries_.at(index).buildsDesktop) {
+        return;
+    }
+
+    activateOrLaunch(index);
 }
 
 void DockBar::mouseReleaseEvent(QMouseEvent *event)
@@ -1071,62 +1801,30 @@ void DockBar::mouseReleaseEvent(QMouseEvent *event)
 void DockBar::showDesktopMenu(int index)
 {
     const uint32_t active = currentDesktop();
-    QMenu menu;
-    menu.setStyleSheet(QStringLiteral(R"(
-        QMenu {
-            background: #F5F5F7;
-            color: #1C1C1E;
-            border: 1px solid #D2D2D7;
-            border-radius: 12px;
-            padding: 6px;
-        }
-
-        QMenu::item {
-            padding: 7px 22px 7px 16px;
-            border-radius: 7px;
-            background: transparent;
-        }
-
-        QMenu::item:selected {
-            background: #0A84FF;
-            color: #FFFFFF;
-        }
-    )"));
-
-    QAction *actions[4] = {};
+    QVector<DockPopup::Row> rows;
+    rows.reserve(4);
 
     for (int desktop = 0; desktop < 4; ++desktop) {
-        const QString mark = static_cast<uint32_t>(desktop) == active
-            ? QString::fromUtf8("✓   ")
-            : QStringLiteral("     ");
-        actions[desktop] = menu.addAction(
-            mark + QStringLiteral("Área de trabalho %1").arg(desktop + 1));
+        rows.push_back({
+            QStringLiteral("Área de trabalho %1").arg(desktop + 1),
+            true,
+            static_cast<uint32_t>(desktop) == active
+        });
     }
 
-    menu.adjustSize();
-    const QRect icon = iconRects_.value(index);
-    const QSize hint = menu.sizeHint();
-    QPoint popup(
-        icon.center().x() - hint.width() / 2,
-        barRect_.top() - hint.height() - 10);
-    popup = mapToGlobal(popup);
-    popup.setX(qBound(screen_.x() + 8, popup.x(), screen_.right() - hint.width() - 8));
+    hover_ = -1;
+    relayout();
+    const QPoint anchor = mapToGlobal(
+        QPoint(iconRects_.value(index).center().x(), barRect_.top()));
+    const int chosen = runDockPopup(rows, anchor, screen_);
 
-    QTimer::singleShot(0, &menu, [&menu]() {
-        menu.raise();
-        menu.repaint();
-    });
-
-    QAction *chosen = menu.exec(popup);
-
-    for (int desktop = 0; desktop < 4; ++desktop) {
-        if (chosen == actions[desktop]) {
-            requestDesktop(static_cast<uint32_t>(desktop));
-            entries_[index].launched = true;
-            update();
-            return;
-        }
+    if (chosen < 0 || chosen >= 4 || index < 0 || index >= entries_.size()) {
+        return;
     }
+
+    requestDesktop(static_cast<uint32_t>(chosen));
+    entries_[index].launched = true;
+    update();
 }
 
 void showBuildAbort(const QString &details)

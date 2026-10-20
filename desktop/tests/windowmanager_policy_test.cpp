@@ -57,6 +57,22 @@ int main()
     expect(containsButton(buttons.close, buttons.close.x + 1, buttons.close.y + 1), "botao fechar");
     expect(titleButtonAt(400, 10, 10) == TitleButton::None, "clique no titulo nao e botao");
 
+    expect(motifWantsTitleBar(false, 0), "sem flag motif mantem barra");
+    expect(!motifWantsTitleBar(true, 0), "motif decor 0 remove barra");
+    expect(motifWantsTitleBar(true, kMotifDecorAll), "motif all mantem barra");
+    expect(!motifWantsTitleBar(true, 1u << 1), "motif so borda remove barra");
+    expect(clientTopOffset(true) == kTitleBarHeight, "chrome com barra");
+    expect(clientTopOffset(false) == 0, "chrome sem barra");
+    expect(frameHeightForClient(600, true) == 600 + kTitleBarHeight, "altura com barra");
+    expect(frameHeightForClient(600, false) == 600, "altura sem barra");
+
+    expect(resizeDirectionForNetWm(0) == ResizeDirection::TopLeft, "moveresize canto");
+    expect(resizeDirectionForNetWm(5) == ResizeDirection::Bottom, "moveresize base");
+    expect(resizeDirectionForNetWm(8) == ResizeDirection::None, "moveresize mover nao e borda");
+    expect(netWmMoveResizeIsMove(8) && netWmMoveResizeIsMove(10), "moveresize mover");
+    expect(!netWmMoveResizeIsMove(4), "redimensionar nao e mover");
+    expect(netWmMoveResizeIsCancel(11), "moveresize cancelar");
+
     if (failures != 0) {
         std::cerr << failures << " falha(s)\n";
         return EXIT_FAILURE;

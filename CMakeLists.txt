@@ -30,12 +30,24 @@ qt_add_executable(eden-desktop
     desktop/src/desktop/desktopwindow.cpp
     desktop/src/desktop/dockbar.hpp
     desktop/src/desktop/dockbar.cpp
+    desktop/src/desktop/desktoplaunch.hpp
+    desktop/src/desktop/desktoplaunch.cpp
     desktop/src/desktop/statusbar.hpp
     desktop/src/desktop/statusbar.cpp
+    desktop/src/desktop/shelllayout.hpp
+    desktop/src/desktop/shelllayout.cpp
+    desktop/src/desktop/monitorlayout.hpp
+    desktop/src/desktop/monitorlayout.cpp
+    desktop/src/desktop/docksettings.hpp
+    desktop/src/desktop/docksettings.cpp
+    desktop/src/desktop/screenshot.hpp
+    desktop/src/desktop/screenshot.cpp
     desktop/src/desktop/programsearch.hpp
     desktop/src/desktop/programsearch.cpp
     desktop/src/desktop/systemmanager.hpp
     desktop/src/desktop/systemmanager.cpp
+    desktop/src/desktop/settingswindow.hpp
+    desktop/src/desktop/settingswindow.cpp
     desktop/src/filemanager/filemanagerwindow.hpp
     desktop/src/filemanager/filemanagerwindow.cpp
     desktop/src/windowmanager/windowmanager.hpp
