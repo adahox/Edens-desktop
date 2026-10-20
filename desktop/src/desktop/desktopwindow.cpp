@@ -24,6 +24,8 @@
 #include <QShowEvent>
 #include <QTimer>
 #include <QApplication>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QStyle>
 #include <QStyledItemDelegate>
 #include <QElapsedTimer>
@@ -464,19 +466,42 @@ void DesktopWindow::applyWallpaper()
         return;
     }
 
+    wallpaper_ = QPixmap(size());
+    wallpaper_.fill(QColor("#20252D"));
+
     const QPixmap source(wallpaperPath());
 
-    if (source.isNull()) {
-        wallpaper_ = QPixmap(size());
-        wallpaper_.fill(QColor("#20252D"));
-    } else {
-        const QPixmap scaled = source.scaled(
-            size(),
-            Qt::KeepAspectRatioByExpanding,
-            Qt::SmoothTransformation);
-        const int x = qMax(0, (scaled.width() - width()) / 2);
-        const int y = qMax(0, (scaled.height() - height()) / 2);
-        wallpaper_ = scaled.copy(x, y, width(), height());
+    if (!source.isNull()) {
+        QPainter painter(&wallpaper_);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        const QRect widgetGlobal = geometry();
+
+        for (QScreen *screen : QGuiApplication::screens()) {
+            if (screen == nullptr) {
+                continue;
+            }
+
+            const QRect monitor = screen->geometry();
+            const QRect overlap = monitor.intersected(widgetGlobal);
+
+            if (overlap.isEmpty()) {
+                continue;
+            }
+
+            const QPixmap scaled = source.scaled(
+                monitor.size(),
+                Qt::KeepAspectRatioByExpanding,
+                Qt::SmoothTransformation);
+            const int originX = qMax(0, (scaled.width() - monitor.width()) / 2);
+            const int originY = qMax(0, (scaled.height() - monitor.height()) / 2);
+            const QRect sourceRect(
+                originX + (overlap.x() - monitor.x()),
+                originY + (overlap.y() - monitor.y()),
+                overlap.width(),
+                overlap.height());
+            const QRect destination = overlap.translated(-widgetGlobal.topLeft());
+            painter.drawPixmap(destination, scaled, sourceRect);
+        }
     }
 
     if (fileView_ != nullptr && fileView_->viewport() != nullptr) {
@@ -639,6 +664,21 @@ void DesktopWindow::showDesktopContextMenu(
 
     if (selectedAction == quitAction) {
         allowSessionExit();
+
+        const QByteArray sessionId = qgetenv("XDG_SESSION_ID");
+
+        if (!sessionId.isEmpty()) {
+            const QString loginctl =
+                QStandardPaths::findExecutable(QStringLiteral("loginctl"));
+
+            if (!loginctl.isEmpty()) {
+                QProcess::startDetached(
+                    loginctl,
+                    {QStringLiteral("terminate-session"),
+                     QString::fromUtf8(sessionId)});
+            }
+        }
+
         QApplication::quit();
     }
 }
@@ -684,5 +724,4 @@ void DesktopWindow::navigateBack()
     }
 
     revealDesktopFiles();
-}
 }

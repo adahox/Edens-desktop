@@ -3,7 +3,9 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDateTime>
 #include <QDialog>
+#include <QIcon>
 #include <QLabel>
 #include <QPlainTextEdit>
 #include <QVBoxLayout>
@@ -29,6 +31,8 @@
 #include <QLinearGradient>
 #include <QShowEvent>
 
+#include <cmath>
+
 #include <cairo/cairo.h>
 
 #include <QtGui/qguiapplication_platform.h>
@@ -43,6 +47,8 @@
 #include <unistd.h>
 
 extern char **environ;
+
+DockBar *DockBar::active_ = nullptr;
 
 extern "C" {
 
@@ -500,9 +506,127 @@ DockBar::DockBar(QWidget *parent)
 
     auto *keepOnTop = new QTimer(this);
     connect(keepOnTop, &QTimer::timeout, this, [this]() {
+        if (QApplication::activePopupWidget() != nullptr ||
+            QApplication::activeModalWidget() != nullptr) {
+            return;
+        }
+
         raise();
     });
     keepOnTop->start(400);
+
+    loadingTimer_ = new QTimer(this);
+    connect(loadingTimer_, &QTimer::timeout, this, [this]() {
+        tickLoading();
+    });
+}
+
+void DockBar::bind(DockBar *dock)
+{
+    active_ = dock;
+}
+
+DockBar *DockBar::instance()
+{
+    return active_;
+}
+
+int DockBar::findEntry(const QString &label) const
+{
+    for (int index = 0; index < entries_.size(); ++index) {
+        if (!entries_.at(index).separator &&
+            entries_.at(index).label.compare(label, Qt::CaseInsensitive) == 0) {
+            return index;
+        }
+    }
+
+    return -1;
+}
+
+int DockBar::separatorIndex() const
+{
+    for (int index = 0; index < entries_.size(); ++index) {
+        if (entries_.at(index).separator) {
+            return index;
+        }
+    }
+
+    return entries_.size();
+}
+
+void DockBar::beginLoading(int index)
+{
+    if (index < 0 || index >= entries_.size() || entries_.at(index).separator) {
+        return;
+    }
+
+    entries_[index].loading = true;
+    entries_[index].launched = false;
+    entries_[index].loadingUntil =
+        QDateTime::currentMSecsSinceEpoch() + kLoadingMs;
+
+    if (!loadingTimer_->isActive()) {
+        loadingPhase_ = 0.0;
+        loadingTimer_->start(16);
+    }
+
+    relayout();
+}
+
+void DockBar::notifyOpening(const QString &label, const QIcon &icon)
+{
+    if (label.trimmed().isEmpty()) {
+        return;
+    }
+
+    const int existing = findEntry(label);
+
+    if (existing >= 0) {
+        beginLoading(existing);
+        return;
+    }
+
+    Entry entry;
+    entry.label = label.trimmed();
+    entry.ephemeral = true;
+    entry.icon = icon.pixmap(kIconHover, kIconHover);
+
+    if (entry.icon.isNull()) {
+        entry.icon = QPixmap(kIconHover, kIconHover);
+        entry.icon.fill(QColor(80, 110, 160));
+    }
+
+    const int insertAt = separatorIndex();
+    entries_.insert(insertAt, entry);
+    beginLoading(insertAt);
+}
+
+void DockBar::tickLoading()
+{
+    loadingPhase_ += 0.22;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    bool anyLoading = false;
+
+    for (int index = 0; index < entries_.size(); ++index) {
+        Entry &entry = entries_[index];
+
+        if (!entry.loading) {
+            continue;
+        }
+
+        anyLoading = true;
+
+        if (now >= entry.loadingUntil) {
+            entry.loading = false;
+            entry.launched = true;
+        }
+    }
+
+    if (!anyLoading) {
+        loadingTimer_->stop();
+    }
+
+    relayout();
 }
 
 void DockBar::buildEntries()
@@ -562,7 +686,24 @@ int DockBar::iconSize(int index) const
         return 0;
     }
 
-    return index == hover_ ? kIconHover : kIconRest;
+    int size = index == hover_ ? kIconHover : kIconRest;
+
+    if (entries_.at(index).loading) {
+        size += static_cast<int>(
+            3.0 * std::abs(std::sin(loadingPhase_ * 1.6 + index * 0.7)));
+    }
+
+    return size;
+}
+
+int DockBar::bounceOffset(int index) const
+{
+    if (index < 0 || index >= entries_.size() || !entries_.at(index).loading) {
+        return 0;
+    }
+
+    return static_cast<int>(
+        -10.0 * std::abs(std::sin(loadingPhase_ * 2.4 + index * 0.55)));
 }
 
 void DockBar::relayout()
@@ -605,7 +746,7 @@ void DockBar::relayout()
         const int slot = kIconHover;
         const int size = iconSize(index);
         const int iconX = cursor + (slot - size) / 2;
-        const int iconY = barRect_.bottom() - kPadY - 8 - size;
+        const int iconY = barRect_.bottom() - kPadY - 8 - size + bounceOffset(index);
         iconRects_[index] = QRect(iconX, iconY, size, size);
         cursor += slot + kGap;
     }
@@ -829,7 +970,19 @@ void DockBar::paintEvent(QPaintEvent *)
             painter.drawRoundedRect(rect, 12, 12);
         }
 
-        if (entry.launched) {
+        if (entry.loading) {
+            QPainterPath clip;
+            clip.addRoundedRect(rect, 12, 12);
+            painter.save();
+            painter.setClipPath(clip);
+            painter.fillRect(rect, QColor(0, 0, 0, 90));
+            painter.setBrush(Qt::NoBrush);
+            painter.setPen(QPen(QColor(255, 255, 255, 230), 2.4, Qt::SolidLine, Qt::RoundCap));
+            const QRect arc = rect.adjusted(10, 10, -10, -10);
+            const int start = static_cast<int>(-loadingPhase_ * 280) * 16;
+            painter.drawArc(arc, start, 110 * 16);
+            painter.restore();
+        } else if (entry.launched) {
             painter.setBrush(QColor(245, 245, 247));
             painter.drawEllipse(QPoint(rect.center().x(), barRect_.bottom() - 8), 2, 2);
         }
@@ -887,8 +1040,7 @@ void DockBar::mousePressEvent(QMouseEvent *event)
     }
 
     if (entries_[index].launch()) {
-        entries_[index].launched = true;
-        update();
+        beginLoading(index);
     }
 }
 
@@ -1060,8 +1212,7 @@ void DockBar::startBuild(int index)
 
     buildIndex_ = index;
     entries_[index].label = QStringLiteral("Compilando");
-    entries_[index].launched = true;
-    relayout();
+    beginLoading(index);
 
     buildProcess_ = new QProcess(this);
     buildProcess_->setWorkingDirectory(projectDir);

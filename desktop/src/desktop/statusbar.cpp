@@ -1,6 +1,8 @@
 #include "desktop/statusbar.hpp"
+#include "desktop/desktopwindow.hpp"
 
 #include <QAction>
+#include <QApplication>
 #include <QClipboard>
 #include <QDateTime>
 #include <QDialog>
@@ -19,6 +21,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
@@ -32,6 +35,7 @@
 #include <QRegularExpression>
 #include <QScreen>
 #include <QScrollArea>
+#include <QShortcut>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QTimer>
@@ -754,13 +758,39 @@ bool startSystemCommand(const QString &program, const QStringList &arguments)
 bool powerOffMachine()
 {
     return startSystemCommand(QStringLiteral("loginctl"), {QStringLiteral("poweroff")}) ||
-           startSystemCommand(QStringLiteral("systemctl"), {QStringLiteral("poweroff")});
+           startSystemCommand(QStringLiteral("systemctl"), {QStringLiteral("poweroff")}) ||
+           startSystemCommand(QStringLiteral("shutdown"), {QStringLiteral("-h"), QStringLiteral("now")});
 }
 
 bool rebootMachine()
 {
     return startSystemCommand(QStringLiteral("loginctl"), {QStringLiteral("reboot")}) ||
-           startSystemCommand(QStringLiteral("systemctl"), {QStringLiteral("reboot")});
+           startSystemCommand(QStringLiteral("systemctl"), {QStringLiteral("reboot")}) ||
+           startSystemCommand(QStringLiteral("shutdown"), {QStringLiteral("-r"), QStringLiteral("now")});
+}
+
+bool endLoginSession()
+{
+    DesktopWindow::allowSessionExit();
+
+    const QByteArray sessionId = qgetenv("XDG_SESSION_ID");
+
+    if (!sessionId.isEmpty() &&
+        startSystemCommand(
+            QStringLiteral("loginctl"),
+            {QStringLiteral("terminate-session"), QString::fromUtf8(sessionId)})) {
+        QCoreApplication::quit();
+        return true;
+    }
+
+    QCoreApplication::quit();
+    return true;
+}
+
+bool popupIsBlockingRaise()
+{
+    return QApplication::activePopupWidget() != nullptr ||
+           QApplication::activeModalWidget() != nullptr;
 }
 
 QPixmap sourceIcon()
@@ -778,41 +808,106 @@ QPixmap sourceIcon()
     return pixmap;
 }
 
-QString desktopSourceDir()
+QString edenProjectDir()
 {
     const QDir binaryDir(QCoreApplication::applicationDirPath());
-    const QString project = QDir(binaryDir.absoluteFilePath(QStringLiteral(".."))).absolutePath();
-    const QString source = QDir(project).filePath(QStringLiteral("desktop/src"));
+    const QStringList candidates = {
+        QDir(binaryDir.absoluteFilePath(QStringLiteral(".."))).absolutePath(),
+        binaryDir.absolutePath(),
+        QDir::current().absolutePath(),
+        QDir(QDir::current().absoluteFilePath(QStringLiteral(".."))).absolutePath()
+    };
 
-    if (QFileInfo::exists(QDir(source).filePath(QStringLiteral("main.cpp")))) {
-        return source;
+    for (const QString &candidate : candidates) {
+        const QDir project(candidate);
+
+        if (QFileInfo::exists(project.filePath(QStringLiteral("CMakeLists.txt"))) &&
+            QFileInfo::exists(project.filePath(QStringLiteral("desktop/src/main.cpp")))) {
+            return project.absolutePath();
+        }
     }
 
     return {};
 }
 
-bool openInEditor(const QString &folder)
+QString resolveEditor(const QString &name)
 {
-    const QStringList editors = {
-        QStringLiteral("cursor"),
-        QStringLiteral("code"),
-        QStringLiteral("codium"),
-        QStringLiteral("xed"),
-        QStringLiteral("gnome-text-editor"),
-        QStringLiteral("gedit"),
-        QStringLiteral("mousepad"),
-        QStringLiteral("kate")
+    const QString found = QStandardPaths::findExecutable(name);
+
+    if (!found.isEmpty()) {
+        return found;
+    }
+
+    const QStringList extras = {
+        QDir::home().filePath(QStringLiteral(".local/bin/") + name),
+        QStringLiteral("/usr/local/bin/") + name,
+        QStringLiteral("/usr/bin/") + name,
+        QStringLiteral("/snap/bin/") + name
     };
 
-    for (const QString &name : editors) {
-        const QString executable = QStandardPaths::findExecutable(name);
+    for (const QString &path : extras) {
+        if (QFileInfo::exists(path) && QFileInfo(path).isExecutable()) {
+            return path;
+        }
+    }
 
-        if (!executable.isEmpty() && QProcess::startDetached(executable, {folder})) {
+    if (name == QStringLiteral("cursor") &&
+        QFileInfo::exists(QStringLiteral("/usr/share/cursor/bin/cursor")) &&
+        QFileInfo(QStringLiteral("/usr/share/cursor/bin/cursor")).isExecutable()) {
+        return QStringLiteral("/usr/share/cursor/bin/cursor");
+    }
+
+    return {};
+}
+
+bool launchEditor(const QString &executable, const QStringList &arguments)
+{
+    if (executable.isEmpty() || !QFileInfo::exists(executable)) {
+        return false;
+    }
+
+    return QProcess::startDetached(executable, arguments);
+}
+
+bool openInEditor(const QString &folder)
+{
+    const struct {
+        const char *name;
+        QStringList arguments;
+    } editors[] = {
+        {"cursor", {QStringLiteral("-n"), folder}},
+        {"cursor", {folder}},
+        {"code", {QStringLiteral("-n"), folder}},
+        {"code", {folder}},
+        {"codium", {folder}},
+        {"xed", {folder}},
+        {"gnome-text-editor", {folder}},
+        {"gedit", {folder}},
+        {"mousepad", {folder}},
+        {"kate", {folder}}
+    };
+
+    for (const auto &editor : editors) {
+        if (launchEditor(resolveEditor(QString::fromLatin1(editor.name)), editor.arguments)) {
             return true;
         }
     }
 
-    return false;
+    if (launchEditor(resolveEditor(QStringLiteral("xdg-open")), {folder})) {
+        return true;
+    }
+
+    return QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+}
+
+void showSourceWarning(const QString &text)
+{
+    QMessageBox box(
+        QMessageBox::Warning,
+        QStringLiteral("Source do desktop"),
+        text);
+    box.setWindowFlag(Qt::WindowStaysOnTopHint);
+    box.exec();
 }
 
 xcb_atom_t internAtom(xcb_connection_t *connection, const char *name)
@@ -1557,6 +1652,10 @@ StatusBar::StatusBar(QWidget *parent)
 
     auto *raiseTimer = new QTimer(this);
     connect(raiseTimer, &QTimer::timeout, this, [this]() {
+        if (popupIsBlockingRaise()) {
+            return;
+        }
+
         raise();
     });
     raiseTimer->start(400);
@@ -1569,6 +1668,18 @@ StatusBar::StatusBar(QWidget *parent)
     });
     connect(powerButton_, &QPushButton::clicked, this, [this]() {
         openPowerMenu();
+    });
+
+    auto *logoutShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+L")), this);
+    logoutShortcut->setContext(Qt::ApplicationShortcut);
+    connect(logoutShortcut, &QShortcut::activated, this, []() {
+        if (!confirmPower(
+                QStringLiteral("Encerrar sessão"),
+                QStringLiteral("Sair desta sessão agora?"))) {
+            return;
+        }
+
+        endLoginSession();
     });
 }
 
@@ -1613,21 +1724,18 @@ void StatusBar::refreshGitButton()
 
 void StatusBar::openDesktopSource()
 {
-    const QString source = desktopSourceDir();
+    const QString project = edenProjectDir();
 
-    if (source.isEmpty()) {
-        QMessageBox::warning(
-            nullptr,
-            QStringLiteral("Source do desktop"),
-            QStringLiteral("Não encontrei a pasta desktop/src do Eden."));
+    if (project.isEmpty()) {
+        showSourceWarning(
+            QStringLiteral("Não encontrei o projeto Eden (CMakeLists.txt / desktop/src)."));
         return;
     }
 
-    if (!openInEditor(source)) {
-        QMessageBox::warning(
-            nullptr,
-            QStringLiteral("Source do desktop"),
-            QStringLiteral("Não encontrei um editor para abrir o código."));
+    if (!openInEditor(project)) {
+        showSourceWarning(
+            QStringLiteral("Não consegui abrir o código em um editor.\nProjeto: %1")
+                .arg(project));
     }
 }
 
@@ -1681,7 +1789,7 @@ void StatusBar::openPowerMenu()
         if (confirmPower(
                 QStringLiteral("Encerrar sessão"),
                 QStringLiteral("Sair desta sessão agora?"))) {
-            QCoreApplication::quit();
+            endLoginSession();
         }
 
         return;

@@ -1,6 +1,15 @@
 #include "windowmanager.hpp"
 #include "titlebarlayout.hpp"
 
+#include <X11/Xlib.h>
+#include <X11/extensions/Xrandr.h>
+#undef None
+#undef Status
+#undef Bool
+#undef True
+#undef False
+#undef Success
+
 #include <cairo/cairo.h>
 #include <jpeglib.h>
 
@@ -165,6 +174,51 @@ Wallpaper& desktopWallpaper()
     return image;
 }
 
+std::vector<MonitorRect> queryMonitorRects(int fallbackWidth, int fallbackHeight)
+{
+    std::vector<MonitorRect> monitors;
+    Display* display = XOpenDisplay(nullptr);
+
+    if (display != nullptr) {
+        int count = 0;
+        XRRMonitorInfo* info = XRRGetMonitors(
+            display,
+            DefaultRootWindow(display),
+            1,
+            &count);
+
+        if (info != nullptr) {
+            for (int index = 0; index < count; ++index) {
+                if (info[index].width <= 0 || info[index].height <= 0) {
+                    continue;
+                }
+
+                monitors.push_back(MonitorRect{
+                    static_cast<int16_t>(info[index].x),
+                    static_cast<int16_t>(info[index].y),
+                    static_cast<uint16_t>(info[index].width),
+                    static_cast<uint16_t>(info[index].height)
+                });
+            }
+
+            XRRFreeMonitors(info);
+        }
+
+        XCloseDisplay(display);
+    }
+
+    if (monitors.empty()) {
+        monitors.push_back(MonitorRect{
+            0,
+            0,
+            static_cast<uint16_t>(std::max(fallbackWidth, 1)),
+            static_cast<uint16_t>(std::max(fallbackHeight, 1))
+        });
+    }
+
+    return monitors;
+}
+
 void wallpaperPixel(
     const Wallpaper& image,
     int screenX,
@@ -175,13 +229,26 @@ void wallpaperPixel(
     std::uint8_t& green,
     std::uint8_t& blue)
 {
+    static const std::vector<MonitorRect> monitors =
+        queryMonitorRects(screenWidth, screenHeight);
+    const int monitorIndex = monitorIndexAt(
+        monitors,
+        static_cast<int16_t>(screenX),
+        static_cast<int16_t>(screenY));
+    const MonitorRect& monitor = monitors[
+        static_cast<std::size_t>(std::max(monitorIndex, 0))];
+    const int localX = screenX - monitor.x;
+    const int localY = screenY - monitor.y;
+    const int monitorWidth = std::max<int>(1, monitor.width);
+    const int monitorHeight = std::max<int>(1, monitor.height);
+
     const double scale = std::max(
-        static_cast<double>(screenWidth) / image.width,
-        static_cast<double>(screenHeight) / image.height);
-    const double originX = (image.width * scale - screenWidth) / 2.0;
-    const double originY = (image.height * scale - screenHeight) / 2.0;
-    int imageX = static_cast<int>((originX + screenX) / scale);
-    int imageY = static_cast<int>((originY + screenY) / scale);
+        static_cast<double>(monitorWidth) / image.width,
+        static_cast<double>(monitorHeight) / image.height);
+    const double originX = (image.width * scale - monitorWidth) / 2.0;
+    const double originY = (image.height * scale - monitorHeight) / 2.0;
+    int imageX = static_cast<int>((originX + localX) / scale);
+    int imageY = static_cast<int>((originY + localY) / scale);
     imageX = std::clamp(imageX, 0, image.width - 1);
     imageY = std::clamp(imageY, 0, image.height - 1);
     const std::uint8_t* pixel = image.rgb.data() +
@@ -1451,7 +1518,11 @@ void WindowManager::toggleMaximize(ManagedWindow& window)
     window.restoreHeight = geometry->height;
     std::free(geometry);
 
-    const MonitorRect area = workArea();
+    const int16_t anchorX = static_cast<int16_t>(
+        window.restoreX + static_cast<int16_t>(window.restoreWidth / 2));
+    const int16_t anchorY = static_cast<int16_t>(
+        window.restoreY + static_cast<int16_t>(window.restoreHeight / 2));
+    const MonitorRect area = workAreaAt(anchorX, anchorY);
 
     layoutFrame(
         window,

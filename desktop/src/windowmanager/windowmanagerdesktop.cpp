@@ -1,5 +1,14 @@
 #include "windowmanager.hpp"
 
+#include <X11/Xlib.h>
+#include <X11/extensions/Xrandr.h>
+#undef None
+#undef Status
+#undef Bool
+#undef True
+#undef False
+#undef Success
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -270,6 +279,73 @@ MonitorRect WindowManager::workArea() const
     }
 
     return area;
+}
+
+std::vector<MonitorRect> WindowManager::connectedMonitors() const
+{
+    std::vector<MonitorRect> monitors;
+
+    Display* display = XOpenDisplay(nullptr);
+
+    if (display != nullptr) {
+        int count = 0;
+        XRRMonitorInfo* info = XRRGetMonitors(
+            display,
+            DefaultRootWindow(display),
+            1,
+            &count);
+
+        if (info != nullptr) {
+            monitors.reserve(static_cast<std::size_t>(std::max(count, 0)));
+
+            for (int index = 0; index < count; ++index) {
+                if (info[index].width <= 0 || info[index].height <= 0) {
+                    continue;
+                }
+
+                monitors.push_back(MonitorRect{
+                    static_cast<int16_t>(info[index].x),
+                    static_cast<int16_t>(info[index].y),
+                    static_cast<uint16_t>(info[index].width),
+                    static_cast<uint16_t>(info[index].height)
+                });
+            }
+
+            XRRFreeMonitors(info);
+        }
+
+        XCloseDisplay(display);
+    }
+
+    if (monitors.empty() && screen_ != nullptr) {
+        monitors.push_back(MonitorRect{
+            0,
+            0,
+            screen_->width_in_pixels,
+            screen_->height_in_pixels
+        });
+    }
+
+    return monitors;
+}
+
+MonitorRect WindowManager::workAreaAt(int16_t x, int16_t y) const
+{
+    const std::vector<MonitorRect> monitors = connectedMonitors();
+    const int index = monitorIndexAt(monitors, x, y);
+
+    if (index < 0 || screen_ == nullptr) {
+        return workArea();
+    }
+
+    return clampedWorkArea(
+        monitors[static_cast<std::size_t>(index)],
+        screen_->width_in_pixels,
+        screen_->height_in_pixels,
+        reservedLeft_,
+        reservedRight_,
+        reservedTop_,
+        reservedBottom_);
 }
 
 void WindowManager::revealManagedFrames()

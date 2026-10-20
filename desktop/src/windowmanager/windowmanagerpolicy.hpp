@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -88,9 +89,41 @@ inline int monitorIndexAt(
 
 inline MonitorRect workAreaFor(MonitorRect monitor, uint16_t panelHeight)
 {
+    monitor.y = static_cast<int16_t>(monitor.y + static_cast<int16_t>(panelHeight));
+
     if (monitor.height > panelHeight) {
         monitor.height = static_cast<uint16_t>(monitor.height - panelHeight);
     }
 
     return monitor;
+}
+
+inline MonitorRect clampedWorkArea(
+    MonitorRect monitor,
+    int screenWidth,
+    int screenHeight,
+    uint16_t reservedLeft,
+    uint16_t reservedRight,
+    uint16_t reservedTop,
+    uint16_t reservedBottom)
+{
+    const int left = std::max<int>(monitor.x, reservedLeft);
+    const int top = std::max<int>(monitor.y, reservedTop);
+    const int right = std::min<int>(
+        monitor.x + static_cast<int>(monitor.width),
+        screenWidth - static_cast<int>(reservedRight));
+    const int bottom = std::min<int>(
+        monitor.y + static_cast<int>(monitor.height),
+        screenHeight - static_cast<int>(reservedBottom));
+
+    if (right <= left || bottom <= top) {
+        return monitor;
+    }
+
+    return MonitorRect{
+        static_cast<int16_t>(left),
+        static_cast<int16_t>(top),
+        static_cast<uint16_t>(right - left),
+        static_cast<uint16_t>(bottom - top)
+    };
 }

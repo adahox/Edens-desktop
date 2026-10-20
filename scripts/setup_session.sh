@@ -32,10 +32,19 @@ Type=Application
 DesktopNames=Eden
 EOF
 
+if ! command -v Xorg >/dev/null 2>&1; then
+    echo "[Eden] Xorg não encontrado. O Eden é uma sessão X11."
+    echo "  Instale com: sudo apt install xserver-xorg xinit"
+    exit 1
+fi
+
 echo "[Eden] Instalando /usr/local/bin/start-eden"
+sudo install -d /usr/local/bin
 sudo install -m 755 "${startup}" /usr/local/bin/start-eden
 
 echo "[Eden] Registrando /usr/share/xsessions/eden.desktop"
+sudo install -d /usr/share/xsessions
 sudo install -m 644 "${session}" /usr/share/xsessions/eden.desktop
 
 echo "[Eden] Pronto. Saia da sessão atual e escolha Eden Desktop na tela de login."
+echo "[Eden] No GDM, use o seletor de sessão (ícone de engrenagem) — a sessão Eden aparece em X11."

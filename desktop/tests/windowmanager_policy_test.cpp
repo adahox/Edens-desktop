@@ -45,7 +45,13 @@ int main()
     expect(monitorIndexAt(monitors, -10, -10) == 0, "fora da tela usa o primeiro");
 
     const MonitorRect area = workAreaFor(monitors[0], 32);
-    expect(area.height == 1048 && area.width == 1920, "area util desconta o painel");
+    expect(area.y == 32 && area.height == 1048 && area.width == 1920, "area util desconta o painel");
+
+    const MonitorRect secondArea = clampedWorkArea(monitors[1], 3200, 1080, 0, 0, 28, 0);
+    expect(
+        secondArea.x == 1920 && secondArea.y == 28 &&
+            secondArea.width == 1280 && secondArea.height == 996,
+        "maximize no segundo monitor");
 
     const TitleBarButtons buttons = titleBarButtons(400);
     expect(containsButton(buttons.close, buttons.close.x + 1, buttons.close.y + 1), "botao fechar");

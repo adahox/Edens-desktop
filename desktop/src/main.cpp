@@ -8,6 +8,7 @@
 #include "desktop/dockbar.hpp"
 #include "desktop/programsearch.hpp"
 #include "desktop/statusbar.hpp"
+#include "desktop/systemmanager.hpp"
 #include <QPainter>
 #include <QColor>
 #include <QContextMenuEvent>
@@ -239,6 +240,7 @@ int main(int argc, char *argv[])
     desktop.show();
 
     DockBar dock;
+    DockBar::bind(&dock);
     dock.place(full);
     dock.show();
 
@@ -247,6 +249,7 @@ int main(int argc, char *argv[])
     statusBar.show();
 
     ProgramSearch::install();
+    SystemManager::install();
 
     return app.exec();
 }

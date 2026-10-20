@@ -1,4 +1,5 @@
 #include "desktop/programsearch.hpp"
+#include "desktop/dockbar.hpp"
 
 #include <QApplication>
 #include <QDirIterator>
@@ -538,6 +539,10 @@ void ProgramSearch::launchCurrent()
     }
 
     if (started) {
+        if (DockBar *dock = DockBar::instance()) {
+            dock->notifyOpening(program.name, program.icon);
+        }
+
         hide();
     }
 }

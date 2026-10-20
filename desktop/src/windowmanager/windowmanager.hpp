@@ -129,6 +129,8 @@ private:
     void handlePanelPress(int16_t x);
     void applyNetWmState(ManagedWindow& window, uint32_t action, xcb_atom_t atom);
     [[nodiscard]] MonitorRect workArea() const;
+    [[nodiscard]] std::vector<MonitorRect> connectedMonitors() const;
+    [[nodiscard]] MonitorRect workAreaAt(int16_t x, int16_t y) const;
     void revealManagedFrames();
     void sendConfigureNotify(
         const ManagedWindow& window,
