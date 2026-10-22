@@ -519,6 +519,10 @@ void readWindowDesktop(
 
     if (reply == nullptr || xcb_get_property_value_length(reply) < 4) {
         std::free(reply);
+        // Sem _NET_WM_DESKTOP a janela não é do desktop 0. Contá-la em todos
+        // evita o ponto sumir quando o cliente apaga a propriedade.
+        client->sticky = true;
+        client->desktop = 0;
         return;
     }
 
@@ -727,12 +731,13 @@ bool closeWindow(quint32 window)
 QVector<ClientWindow> matchingWindows(
     const QStringList &classHints,
     const QVector<qint64> &pids,
-    const QStringList &titleHints)
+    const QStringList &titleHints,
+    bool onlyCurrentDesktop)
 {
     QVector<ClientWindow> matches;
     QVector<quint32> seen;
     xcb_connection_t *connection = x11();
-    const quint32 currentDesktop = connection == nullptr
+    const quint32 currentDesktop = !onlyCurrentDesktop || connection == nullptr
         ? 0
         : currentDesktopIndex(connection, rootWindow(connection));
 
@@ -741,7 +746,7 @@ QVector<ClientWindow> matchingWindows(
             continue;
         }
 
-        if (!visibleOnCurrentDesktop(client, currentDesktop)) {
+        if (onlyCurrentDesktop && !visibleOnCurrentDesktop(client, currentDesktop)) {
             continue;
         }
 

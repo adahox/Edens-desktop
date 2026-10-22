@@ -9,6 +9,7 @@
 #include <QWidget>
 
 class DesktopRipple;
+class DesktopWidgets;
 
 class QCloseEvent;
 class QContextMenuEvent;
@@ -83,6 +84,7 @@ private:
     QListView *fileView_ = nullptr;
     QStandardItemModel *fileModel_ = nullptr;
     DesktopRipple *ripple_ = nullptr;
+    DesktopWidgets *widgets_ = nullptr;
 
     static bool sessionExitAllowed_;
 };

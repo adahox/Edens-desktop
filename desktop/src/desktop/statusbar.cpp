@@ -1,6 +1,9 @@
 #include "desktop/statusbar.hpp"
 #include "desktop/desktopwindow.hpp"
+#include "desktop/glassstyle.hpp"
 #include "desktop/networkmenu.hpp"
+#include "desktop/sysmetrics.hpp"
+#include "desktop/wallpapersettings.hpp"
 
 #include <QAction>
 #include <QApplication>
@@ -24,10 +27,13 @@
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLinearGradient>
 #include <QMenu>
 #include <QMessageBox>
 #include <QLineEdit>
 #include <QLocale>
+#include <QBitmap>
+#include <QImage>
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
@@ -698,6 +704,11 @@ QString copiedText()
     return selection;
 }
 
+QColor trayInk()
+{
+    return EdenGlass::current().textColor();
+}
+
 QPixmap gitIcon(bool active)
 {
     QPixmap pixmap(18, 18);
@@ -705,7 +716,7 @@ QPixmap gitIcon(bool active)
 
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(QColor(QStringLiteral("#1C1C1E")), 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setPen(QPen(trayInk(), 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.setBrush(Qt::NoBrush);
     painter.drawEllipse(QPointF(5, 4), 2.1, 2.1);
     painter.drawEllipse(QPointF(5, 14), 2.1, 2.1);
@@ -715,7 +726,7 @@ QPixmap gitIcon(bool active)
 
     if (active) {
         painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(QStringLiteral("#34C759")));
+        painter.setBrush(QColor(QStringLiteral("#00E5FF")));
         painter.drawEllipse(QPointF(15, 3.2), 2.5, 2.5);
     }
 
@@ -730,7 +741,7 @@ QPixmap powerIcon()
 
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(QColor(QStringLiteral("#1C1C1E")), 1.55, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setPen(QPen(trayInk(), 1.55, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.setBrush(Qt::NoBrush);
     painter.drawArc(QRectF(3.0, 4.2, 12.0, 12.0), 52 * 16, 276 * 16);
     painter.drawLine(QPointF(9.0, 2.4), QPointF(9.0, 9.0));
@@ -752,11 +763,11 @@ QPixmap powerMenuGlyph(const QString &kind)
         fill = QColor(0xFF, 0xEB, 0xEE);
         ink = QColor(0xFF, 0x3B, 0x30);
     } else if (kind == QLatin1String("reboot")) {
-        fill = QColor(0xEE, 0xF4, 0xFF);
-        ink = QColor(0x00, 0x7A, 0xFF);
+        fill = QColor(0x12, 0x2A, 0x32);
+        ink = QColor(0x00, 0xE5, 0xFF);
     } else if (kind == QLatin1String("logout")) {
-        fill = QColor(0xF2, 0xF2, 0xF7);
-        ink = QColor(0x3A, 0x3A, 0x3C);
+        fill = QColor(0x1A, 0x24, 0x2E);
+        ink = QColor(0xE7, 0xF2, 0xF6);
     }
 
     painter.setPen(Qt::NoPen);
@@ -864,8 +875,8 @@ protected:
     {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(QPen(QColor(QStringLiteral("#D2D2D7")), 1));
-        painter.setBrush(QColor(QStringLiteral("#F5F5F7")));
+        painter.setPen(QPen(QColor(255, 255, 255, 38), 1));
+        painter.setBrush(QColor(18, 24, 32, 230));
         painter.drawRoundedRect(rect().adjusted(0, 0, -1, -1), 14, 14);
     }
 
@@ -880,7 +891,7 @@ private:
             "QPushButton {"
             "  background: transparent; border: none; border-radius: 10px; text-align: left;"
             "}"
-            "QPushButton:hover { background: rgba(0,0,0,0.06); }"));
+            "QPushButton:hover { background: rgba(0,229,255,0.16); }"));
 
         auto *row = new QHBoxLayout(button);
         row->setContentsMargins(8, 6, 10, 6);
@@ -904,11 +915,11 @@ private:
         name->setStyleSheet(
             id == QLatin1String("shutdown")
                 ? QStringLiteral("color: #FF3B30; background: transparent;")
-                : QStringLiteral("color: #1C1C1E; background: transparent;"));
+                : QStringLiteral("color: #E7F2F6; background: transparent;"));
         name->setAttribute(Qt::WA_TransparentForMouseEvents);
 
         auto *detail = new QLabel(subtitle, button);
-        detail->setStyleSheet(QStringLiteral("color: #6E6E73; background: transparent; font-size: 11px;"));
+        detail->setStyleSheet(QStringLiteral("color: #8FA3B3; background: transparent; font-size: 11px;"));
         detail->setAttribute(Qt::WA_TransparentForMouseEvents);
 
         text->addWidget(name);
@@ -938,11 +949,11 @@ QPixmap networkIcon()
 
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(QColor(QStringLiteral("#1C1C1E")), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setPen(QPen(trayInk(), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.setBrush(Qt::NoBrush);
     painter.drawArc(QRectF(2.2, 5.5, 13.6, 13.6), 40 * 16, 100 * 16);
     painter.drawArc(QRectF(4.4, 7.8, 9.2, 9.2), 40 * 16, 100 * 16);
-    painter.setBrush(QColor(QStringLiteral("#1C1C1E")));
+    painter.setBrush(QColor(QStringLiteral("#00E5FF")));
     painter.setPen(Qt::NoPen);
     painter.drawEllipse(QPointF(9, 14.2), 1.55, 1.55);
     return pixmap;
@@ -1014,7 +1025,7 @@ QPixmap sourceIcon()
 
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(QColor(QStringLiteral("#1C1C1E")), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setPen(QPen(trayInk(), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.drawLine(QPointF(8, 4), QPointF(3.5, 9));
     painter.drawLine(QPointF(3.5, 9), QPointF(8, 14));
     painter.drawLine(QPointF(10, 4), QPointF(14.5, 9));
@@ -1169,25 +1180,27 @@ public:
         setModal(true);
         setMinimumWidth(420);
         setStyleSheet(QStringLiteral(R"(
-            QDialog { background: #FFFFFF; }
-            QLabel { color: #1C1C1E; }
+            QDialog { background: rgba(18, 24, 32, 0.96); }
+            QLabel { color: #E7F2F6; }
             QLineEdit {
-                background: #F5F5F7;
-                color: #1C1C1E;
-                border: 1px solid #D2D2D7;
-                border-radius: 8px;
+                background: rgba(255, 255, 255, 0.06);
+                color: #E7F2F6;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 12px;
                 padding: 7px 10px;
             }
             QPushButton {
-                background: #0A84FF;
-                color: #FFFFFF;
+                background: #00E5FF;
+                color: #121820;
                 border: none;
-                border-radius: 8px;
+                border-radius: 12px;
                 padding: 8px 16px;
+                font-weight: 600;
             }
             QPushButton#secondary {
-                background: #E8E8ED;
-                color: #1C1C1E;
+                background: rgba(255, 255, 255, 0.06);
+                color: #E7F2F6;
+                border: 1px solid rgba(255, 255, 255, 0.15);
             }
         )"));
 
@@ -1457,16 +1470,16 @@ public:
                 border-radius: 8px;
                 text-align: left;
             }
-            QPushButton QLabel#repoName { color: #1C1C1E; font-size: 14px; }
-            QPushButton QLabel#repoDetail { color: #6E6E73; font-size: 12px; }
-            QPushButton:hover { background: #E8E8ED; }
+            QPushButton QLabel#repoName { color: #E7F2F6; font-size: 14px; }
+            QPushButton QLabel#repoDetail { color: #8FA3B3; font-size: 12px; }
+            QPushButton:hover { background: rgba(0,229,255,0.16); }
             QScrollBar:vertical {
                 background: transparent;
                 width: 8px;
                 margin: 6px 2px;
             }
             QScrollBar::handle:vertical {
-                background: #C7C7CC;
+                background: rgba(0,229,255,0.45);
                 border-radius: 4px;
                 min-height: 24px;
             }
@@ -1483,11 +1496,11 @@ public:
         titleFont.setPointSize(13);
         titleFont.setWeight(QFont::DemiBold);
         title->setFont(titleFont);
-        title->setStyleSheet(QStringLiteral("color: #1C1C1E; padding: 2px 10px 0 10px;"));
+        title->setStyleSheet(QStringLiteral("color: #E7F2F6; padding: 2px 10px 0 10px;"));
         layout->addWidget(title);
 
         auto *caption = new QLabel(QStringLiteral("Repositórios"));
-        caption->setStyleSheet(QStringLiteral("color: #6E6E73; padding: 0 10px 6px 10px;"));
+        caption->setStyleSheet(QStringLiteral("color: #8FA3B3; padding: 0 10px 6px 10px;"));
         layout->addWidget(caption);
 
         scroll_ = new QScrollArea;
@@ -1503,7 +1516,7 @@ public:
         listLayout_->setContentsMargins(0, 0, 0, 0);
         listLayout_->setSpacing(2);
         loading_ = new QLabel(QStringLiteral("Carregando…"));
-        loading_->setStyleSheet(QStringLiteral("color: #6E6E73; padding: 8px 10px;"));
+        loading_->setStyleSheet(QStringLiteral("color: #8FA3B3; padding: 8px 10px;"));
         listLayout_->addWidget(loading_);
         listLayout_->addStretch();
         scroll_->viewport()->setAutoFillBackground(false);
@@ -1513,14 +1526,14 @@ public:
         auto *line = new QFrame;
         line->setFrameShape(QFrame::HLine);
         line->setFixedHeight(1);
-        line->setStyleSheet(QStringLiteral("background: #D2D2D7; border: none;"));
+        line->setStyleSheet(QStringLiteral("background: rgba(255,255,255,0.15); border: none;"));
         layout->addWidget(line);
 
         auto *logout = new QPushButton(QStringLiteral("Encerrar sessão"));
         logout->setCursor(Qt::PointingHandCursor);
         logout->setStyleSheet(QStringLiteral(
-            "QPushButton { color: #1C1C1E; padding: 8px 10px; background: transparent; border: none; border-radius: 8px; }"
-            "QPushButton:hover { background: #E8E8ED; }"));
+            "QPushButton { color: #E7F2F6; padding: 8px 10px; background: transparent; border: none; border-radius: 8px; }"
+            "QPushButton:hover { background: rgba(0,229,255,0.16); }"));
         layout->addWidget(logout);
         connect(logout, &QPushButton::clicked, this, [this]() {
             QString error;
@@ -1548,8 +1561,8 @@ protected:
         }
 
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(QPen(QColor(QStringLiteral("#D2D2D7"))));
-        painter.setBrush(Qt::white);
+        painter.setPen(QPen(QColor(255, 255, 255, 38)));
+        painter.setBrush(QColor(18, 24, 32, 235));
         painter.drawRoundedRect(rect().adjusted(0, 0, -1, -1), kRadius, kRadius);
     }
 
@@ -1639,7 +1652,7 @@ private:
         clearLoading();
         auto *label = new QLabel(message);
         label->setWordWrap(true);
-        label->setStyleSheet(QStringLiteral("color: #6E6E73; padding: 8px 10px;"));
+        label->setStyleSheet(QStringLiteral("color: #8FA3B3; padding: 8px 10px;"));
         listLayout_->insertWidget(0, label);
         placeNearAnchor();
     }
@@ -1669,7 +1682,7 @@ private:
             nameFont.setPointSize(13);
             nameFont.setWeight(QFont::DemiBold);
             name->setFont(nameFont);
-            name->setStyleSheet(QStringLiteral("color: #1C1C1E; background: transparent;"));
+            name->setStyleSheet(QStringLiteral("color: #E7F2F6; background: transparent;"));
 
             auto *detail = new QLabel(repo.detail);
             detail->setObjectName(QStringLiteral("repoDetail"));
@@ -1677,7 +1690,7 @@ private:
             QFont detailFont = detail->font();
             detailFont.setPointSize(11);
             detail->setFont(detailFont);
-            detail->setStyleSheet(QStringLiteral("color: #6E6E73; background: transparent;"));
+            detail->setStyleSheet(QStringLiteral("color: #8FA3B3; background: transparent;"));
             row->addWidget(name);
             row->addWidget(detail);
 
@@ -1756,14 +1769,14 @@ private:
         if (!behind.isNull()) {
             painter.drawPixmap(rect(), behind, behind.rect());
         } else {
-            painter.fillRect(rect(), Qt::white);
+            painter.fillRect(rect(), QColor(18, 24, 32, 230));
         }
 
         const QRectF box(0.5, 0.5, width() - 1.0, height() - 1.0);
         QPainterPath shape;
         shape.addRoundedRect(box, kRadius, kRadius);
-        painter.fillPath(shape, Qt::white);
-        painter.setPen(QPen(QColor(QStringLiteral("#D2D2D7")), 1.0));
+        painter.fillPath(shape, QColor(18, 24, 32, 217));
+        painter.setPen(QPen(QColor(255, 255, 255, 38), 1.0));
         painter.drawPath(shape);
         painter.end();
 
@@ -1811,13 +1824,33 @@ StatusBar::StatusBar(QWidget *parent)
     setFixedHeight(kBarHeight);
 
     auto *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(16, 0, 14, 0);
+    layout->setContentsMargins(18, 0, 14, 0);
     layout->setSpacing(8);
-    layout->addStretch();
 
     const QString buttonStyle = QStringLiteral(
-        "QPushButton { border: none; background: transparent; border-radius: 6px; }"
-        "QPushButton:hover { background: #E8E8ED; }");
+        "QPushButton { border: none; background: transparent; border-radius: 8px; }"
+        "QPushButton:hover { background: rgba(0,229,255,0.16); }");
+
+    clock_ = new QLabel(this);
+    clock_->setTextFormat(Qt::RichText);
+    QFont clockFont = clock_->font();
+    clockFont.setPointSize(12);
+    clockFont.setWeight(QFont::Medium);
+    clock_->setFont(clockFont);
+    layout->addWidget(clock_);
+    layout->addStretch();
+
+    const auto trayLabel = [this, layout](QLabel *&slot, const QString &tip) {
+        slot = new QLabel(this);
+        slot->setToolTip(tip);
+        layout->addWidget(slot);
+    };
+    trayLabel(tempLabel_, QStringLiteral("Temperatura média e máxima"));
+    trayLabel(mediaLabel_, QStringLiteral("Mídia em reprodução"));
+    trayLabel(layoutLabel_, QStringLiteral("Layout do teclado"));
+    trayLabel(netLabel_, QStringLiteral("Taxa de transferência da rede"));
+    trayLabel(batteryLabel_, QStringLiteral("Bateria"));
+    mediaLabel_->setMaximumWidth(180);
 
     sourceButton_ = new QPushButton(this);
     sourceButton_->setFlat(true);
@@ -1836,14 +1869,6 @@ StatusBar::StatusBar(QWidget *parent)
     gitButton_->setIconSize(QSize(18, 18));
     gitButton_->setStyleSheet(buttonStyle);
     layout->addWidget(gitButton_);
-
-    clock_ = new QLabel(this);
-    QFont clockFont = clock_->font();
-    clockFont.setPointSize(12);
-    clockFont.setWeight(QFont::Medium);
-    clock_->setFont(clockFont);
-    clock_->setStyleSheet(QStringLiteral("color: #1C1C1E; background: transparent;"));
-    layout->addWidget(clock_);
 
     networkButton_ = new QPushButton(this);
     networkButton_->setFlat(true);
@@ -1866,11 +1891,13 @@ StatusBar::StatusBar(QWidget *parent)
     layout->addWidget(powerButton_);
 
     refreshClock();
+    refreshTray();
     refreshGitButton();
 
     auto *clockTimer = new QTimer(this);
     connect(clockTimer, &QTimer::timeout, this, [this]() {
         refreshClock();
+        refreshTray();
     });
     clockTimer->start(1000);
 
@@ -1908,25 +1935,132 @@ StatusBar::StatusBar(QWidget *parent)
 
         endLoginSession();
     });
+
+    EdenGlass::watch(this, [this]() {
+        refreshClock();
+        refreshTray();
+        refreshGlassPlate();
+        sourceButton_->setIcon(sourceIcon());
+        gitButton_->setIcon(gitIcon(gitActive_));
+        networkButton_->setIcon(networkIcon());
+        powerButton_->setIcon(powerIcon());
+        update();
+    });
 }
 
 void StatusBar::place(const QRect &screen)
 {
     screen_ = screen;
-    setGeometry(screen.x(), screen.y(), screen.width(), kBarHeight);
+    const int width = qMax(360, screen.width() - kTopMargin * 2);
+    setGeometry(screen.x() + kTopMargin, screen.y() + kTopMargin, width, kBarHeight);
+    refreshGlassPlate();
+    updateMask();
 }
 
 void StatusBar::paintEvent(QPaintEvent *)
 {
     QPainter painter(this);
-    painter.fillRect(rect(), Qt::white);
-    painter.setPen(QColor(QStringLiteral("#D2D2D7")));
-    painter.drawLine(0, height() - 1, width(), height() - 1);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QRectF box(0.5, 0.5, width() - 1.0, height() - 1.0);
+    QPainterPath shape;
+    shape.addRoundedRect(box, kRadius, kRadius);
+
+    if (!glassPlate_.isNull()) {
+        painter.setClipPath(shape);
+        painter.drawPixmap(rect(), glassPlate_);
+        painter.setClipping(false);
+    } else {
+        painter.fillPath(shape, EdenGlass::current().panelColor());
+    }
+
+    painter.setPen(QPen(EdenGlass::current().borderColor(), 1));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawPath(shape);
+}
+
+void StatusBar::updateMask()
+{
+    if (width() <= 0 || height() <= 0) {
+        clearMask();
+        return;
+    }
+
+    QBitmap bitmap(size());
+    bitmap.fill(Qt::color0);
+    QPainter painter(&bitmap);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(Qt::color1);
+    painter.drawRoundedRect(rect().adjusted(0, 0, -1, -1), kRadius, kRadius);
+    painter.end();
+    setMask(bitmap);
+}
+
+void StatusBar::refreshGlassPlate()
+{
+    if (width() <= 0 || height() <= 0) {
+        return;
+    }
+
+    const EdenGlass::Appearance look = EdenGlass::current();
+    QImage plate(size(), QImage::Format_ARGB32_Premultiplied);
+    const QPixmap source(EdenWallpaper::currentPath());
+
+    if (source.isNull() || screen_.isEmpty()) {
+        plate.fill(look.dark ? QColor(30, 30, 46) : QColor(255, 255, 255));
+    } else {
+        const QPixmap covered = source.scaled(
+            screen_.size(),
+            Qt::KeepAspectRatioByExpanding,
+            Qt::SmoothTransformation);
+        const int originX = qMax(0, (covered.width() - screen_.width()) / 2);
+        const int originY = qMax(0, (covered.height() - screen_.height()) / 2);
+        const QPoint globalTopLeft = mapToGlobal(QPoint(0, 0));
+        const QRect sample(
+            originX + globalTopLeft.x() - screen_.x(),
+            originY + globalTopLeft.y() - screen_.y(),
+            width(),
+            height());
+        const QImage piece = covered.copy(sample).toImage();
+
+        if (piece.isNull()) {
+            plate.fill(look.dark ? QColor(30, 30, 46) : QColor(255, 255, 255));
+        } else {
+            const int divisor = look.blurDivisor();
+            const QImage small = piece.scaled(
+                qMax(1, piece.width() / divisor),
+                qMax(1, piece.height() / divisor),
+                Qt::IgnoreAspectRatio,
+                Qt::SmoothTransformation);
+            plate = small.scaled(size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        }
+    }
+
+    QPainter frost(&plate);
+    frost.fillRect(plate.rect(), look.frostColor());
+    QLinearGradient sheen(0, 0, 0, plate.height());
+    sheen.setColorAt(0.0, QColor(255, 255, 255, 28 + look.liquid / 5));
+    sheen.setColorAt(1.0, QColor(255, 255, 255, 0));
+    frost.fillRect(plate.rect(), sheen);
+    frost.end();
+
+    plate = plate.convertToFormat(QImage::Format_ARGB32);
+
+    for (int y = 0; y < plate.height(); ++y) {
+        auto *line = reinterpret_cast<QRgb *>(plate.scanLine(y));
+
+        for (int x = 0; x < plate.width(); ++x) {
+            line[x] = qRgba(qRed(line[x]), qGreen(line[x]), qBlue(line[x]), 255);
+        }
+    }
+
+    glassPlate_ = QPixmap::fromImage(plate);
+    update();
 }
 
 void StatusBar::showEvent(QShowEvent *)
 {
     QTimer::singleShot(0, this, [this]() {
+        refreshGlassPlate();
         publishDockStrut();
         raise();
     });
@@ -1935,7 +2069,58 @@ void StatusBar::showEvent(QShowEvent *)
 void StatusBar::refreshClock()
 {
     const QLocale locale(QLocale::Portuguese, QLocale::Brazil);
-    clock_->setText(locale.toString(QDateTime::currentDateTime(), QStringLiteral("ddd d 'de' MMM  HH:mm")));
+    const QDateTime now = QDateTime::currentDateTime();
+    const EdenGlass::Appearance look = EdenGlass::current();
+    clock_->setText(QStringLiteral(
+        "<span style='color:%1; font-size:15px; font-weight:600;'>%2</span>"
+        "<span style='color:%3; font-size:12px;'>&nbsp;&nbsp;%4</span>")
+                        .arg(
+                            look.textColor().name(),
+                            now.toString(QStringLiteral("HH:mm")),
+                            look.mutedColor().name(),
+                            locale.toString(now, QStringLiteral("ddd, d 'de' MMM"))));
+}
+
+void StatusBar::refreshTray()
+{
+    const EdenMetrics::Snapshot metrics = EdenMetrics::current();
+    const EdenGlass::Appearance look = EdenGlass::current();
+    const QString style = QStringLiteral("color: %1; background: transparent;").arg(look.textColor().name());
+
+    const auto apply = [&style](QLabel *label) {
+        if (label != nullptr) {
+            label->setStyleSheet(style);
+        }
+    };
+    apply(tempLabel_);
+    apply(mediaLabel_);
+    apply(layoutLabel_);
+    apply(netLabel_);
+    apply(batteryLabel_);
+
+    tempLabel_->setText(
+        metrics.tempOk
+            ? QStringLiteral("%1° / %2°").arg(metrics.tempAvgC).arg(metrics.tempMaxC)
+            : QStringLiteral("—"));
+    layoutLabel_->setText(metrics.keyboard.isEmpty() ? QStringLiteral("—") : metrics.keyboard);
+    netLabel_->setText(EdenMetrics::formatRate(metrics.netBytesPerSec));
+
+    if (metrics.mediaTitle.isEmpty()) {
+        mediaLabel_->hide();
+    } else {
+        mediaLabel_->setText(metrics.mediaTitle);
+        mediaLabel_->show();
+    }
+
+    if (metrics.batteryPercent < 0) {
+        batteryLabel_->hide();
+    } else {
+        batteryLabel_->setText(
+            QStringLiteral("%1%%2")
+                .arg(metrics.batteryPercent)
+                .arg(metrics.batteryCharging ? QStringLiteral(" +") : QString()));
+        batteryLabel_->show();
+    }
 }
 
 void StatusBar::refreshGitButton()
@@ -2055,7 +2240,8 @@ void StatusBar::publishDockStrut()
     replaceAtom(connection, window, typeProperty, dockType);
 
     const xcb_atom_t strut = internAtom(connection, "_NET_WM_STRUT");
-    const uint32_t reserved[] = {0, 0, static_cast<uint32_t>(kBarHeight), 0};
+    const int reservedTop = qMax(0, screen_.y()) + kTopMargin + kBarHeight;
+    const uint32_t reserved[] = {0, 0, static_cast<uint32_t>(reservedTop), 0};
 
     if (strut != XCB_ATOM_NONE) {
         xcb_change_property(
@@ -2070,11 +2256,12 @@ void StatusBar::publishDockStrut()
     }
 
     const xcb_atom_t partial = internAtom(connection, "_NET_WM_STRUT_PARTIAL");
-    const uint32_t width = screen_.width() > 0 ? static_cast<uint32_t>(screen_.width() - 1) : 0;
+    const uint32_t startX = static_cast<uint32_t>(qMax(0, screen_.x()));
+    const uint32_t endX = static_cast<uint32_t>(qMax(screen_.x(), screen_.right()));
     const uint32_t partialValues[] = {
-        0, 0, static_cast<uint32_t>(kBarHeight), 0,
+        0, 0, static_cast<uint32_t>(reservedTop), 0,
         0, 0, 0, 0,
-        0, width, 0, 0
+        startX, endX, 0, 0
     };
 
     if (partial != XCB_ATOM_NONE) {

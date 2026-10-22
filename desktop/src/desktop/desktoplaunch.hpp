@@ -35,7 +35,8 @@ bool launchCommand(const QStringList &arguments, bool terminal, qint64 *pid = nu
 [[nodiscard]] QVector<ClientWindow> matchingWindows(
     const QStringList &classHints,
     const QVector<qint64> &pids,
-    const QStringList &titleHints = {});
+    const QStringList &titleHints = {},
+    bool onlyCurrentDesktop = true);
 [[nodiscard]] QPixmap captureWindowPixmap(quint32 window);
 bool activateWindow(quint32 window);
 bool closeWindow(quint32 window);

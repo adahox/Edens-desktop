@@ -37,7 +37,7 @@ DebInstaller::DebInstaller(const QString &debPath, QWidget *parent)
 
     statusLabel_ = new QLabel(QStringLiteral("Arraste o pacote para o Sistema para instalar"), this);
     statusLabel_->setAlignment(Qt::AlignCenter);
-    statusLabel_->setStyleSheet(QStringLiteral("color: #3A3A3C; background: transparent; font-size: 13px;"));
+    statusLabel_->setStyleSheet(QStringLiteral("color: #8FA3B3; background: transparent; font-size: 13px;"));
     layout->addWidget(statusLabel_);
 
     progress_ = new QProgressBar(this);
@@ -46,8 +46,8 @@ DebInstaller::DebInstaller(const QString &debPath, QWidget *parent)
     progress_->setFixedHeight(6);
     progress_->setVisible(false);
     progress_->setStyleSheet(QStringLiteral(
-        "QProgressBar { background: #D2D2D7; border: none; border-radius: 3px; }"
-        "QProgressBar::chunk { background: #007AFF; border-radius: 3px; }"));
+        "QProgressBar { background: rgba(255,255,255,0.12); border: none; border-radius: 3px; }"
+        "QProgressBar::chunk { background: #00E5FF; border-radius: 3px; }"));
     layout->addWidget(progress_);
 
     loadPackageInfo();
@@ -112,8 +112,8 @@ QPixmap DebInstaller::packageIcon() const
     painter.setRenderHint(QPainter::Antialiasing);
 
     QLinearGradient gradient(0, 0, 96, 96);
-    gradient.setColorAt(0.0, QColor(90, 200, 250));
-    gradient.setColorAt(1.0, QColor(0, 122, 255));
+    gradient.setColorAt(0.0, QColor(122, 240, 255));
+    gradient.setColorAt(1.0, QColor(0, 229, 255));
     painter.setBrush(gradient);
     painter.setPen(Qt::NoPen);
     painter.drawRoundedRect(8, 8, 80, 80, 20, 20);
@@ -132,8 +132,8 @@ void DebInstaller::setStatus(const QString &text, bool error)
 {
     statusLabel_->setText(text);
     statusLabel_->setStyleSheet(
-        error ? QStringLiteral("color: #D70015; background: transparent; font-size: 13px;")
-              : QStringLiteral("color: #3A3A3C; background: transparent; font-size: 13px;"));
+        error ? QStringLiteral("color: #FF6B7A; background: transparent; font-size: 13px;")
+              : QStringLiteral("color: #8FA3B3; background: transparent; font-size: 13px;"));
 }
 
 void DebInstaller::paintEvent(QPaintEvent *)
@@ -143,11 +143,11 @@ void DebInstaller::paintEvent(QPaintEvent *)
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
 
     QLinearGradient background(0, 0, 0, height());
-    background.setColorAt(0.0, QColor(245, 245, 247));
-    background.setColorAt(1.0, QColor(232, 232, 237));
+    background.setColorAt(0.0, QColor(22, 30, 40));
+    background.setColorAt(1.0, QColor(18, 24, 32));
     painter.fillRect(rect(), background);
 
-    painter.setPen(QColor(210, 210, 215));
+    painter.setPen(QColor(255, 255, 255, 38));
     painter.drawLine(0, height() - 86, width(), height() - 86);
 
     const QRect package = packageRect();
@@ -162,7 +162,7 @@ void DebInstaller::paintEvent(QPaintEvent *)
     nameFont.setPointSize(12);
     nameFont.setWeight(QFont::DemiBold);
     painter.setFont(nameFont);
-    painter.setPen(QColor(28, 28, 30));
+    painter.setPen(QColor(231, 242, 246));
     painter.drawText(
         QRect(package.left() - 20, package.bottom() - 34, package.width() + 40, 20),
         Qt::AlignCenter,
@@ -172,7 +172,7 @@ void DebInstaller::paintEvent(QPaintEvent *)
         QFont versionFont = font();
         versionFont.setPointSize(10);
         painter.setFont(versionFont);
-        painter.setPen(QColor(99, 99, 102));
+        painter.setPen(QColor(143, 163, 179));
         painter.drawText(
             QRect(package.left() - 20, package.bottom() - 16, package.width() + 40, 18),
             Qt::AlignCenter,
@@ -181,19 +181,19 @@ void DebInstaller::paintEvent(QPaintEvent *)
 
     const QPoint arrowStart(package.right() + 18, package.center().y() - 10);
     const QPoint arrowEnd(target.left() - 18, package.center().y() - 10);
-    painter.setPen(QPen(QColor(142, 142, 147), 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setPen(QPen(QColor(143, 163, 179), 3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.drawLine(arrowStart, arrowEnd);
     QPainterPath tip;
     tip.moveTo(arrowEnd);
     tip.lineTo(arrowEnd.x() - 12, arrowEnd.y() - 8);
     tip.lineTo(arrowEnd.x() - 12, arrowEnd.y() + 8);
     tip.closeSubpath();
-    painter.setBrush(QColor(142, 142, 147));
+    painter.setBrush(QColor(143, 163, 179));
     painter.setPen(Qt::NoPen);
     painter.drawPath(tip);
 
-    QColor targetFill = targetHot_ ? QColor(0, 122, 255, 28) : QColor(255, 255, 255, 180);
-    QColor targetBorder = targetHot_ ? QColor(0, 122, 255) : QColor(174, 174, 178);
+    QColor targetFill = targetHot_ ? QColor(0, 229, 255, 40) : QColor(255, 255, 255, 16);
+    QColor targetBorder = targetHot_ ? QColor(0, 229, 255) : QColor(255, 255, 255, 38);
     painter.setBrush(targetFill);
     painter.setPen(QPen(targetBorder, targetHot_ ? 2.5 : 1.6, Qt::DashLine, Qt::RoundCap));
     painter.drawRoundedRect(target.adjusted(8, 0, -8, -28), 28, 28);
@@ -205,7 +205,7 @@ void DebInstaller::paintEvent(QPaintEvent *)
     targetFont.setPointSize(12);
     targetFont.setWeight(QFont::DemiBold);
     painter.setFont(targetFont);
-    painter.setPen(targetHot_ ? QColor(0, 90, 200) : QColor(28, 28, 30));
+    painter.setPen(targetHot_ ? QColor(0, 229, 255) : QColor(231, 242, 246));
     painter.drawText(
         QRect(target.left() - 10, target.bottom() - 34, target.width() + 20, 22),
         Qt::AlignCenter,

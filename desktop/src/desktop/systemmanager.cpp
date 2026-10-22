@@ -47,10 +47,10 @@
 
 namespace {
 
-constexpr QColor kBg(18, 22, 32);
-constexpr QColor kCard(28, 34, 48, 210);
-constexpr QColor kCardBorder(70, 82, 110, 120);
-constexpr QColor kCpu(0, 210, 255);
+constexpr QColor kBg(18, 24, 32);
+constexpr QColor kCard(18, 24, 32, 217);
+constexpr QColor kCardBorder(255, 255, 255, 38);
+constexpr QColor kCpu(0, 229, 255);
 constexpr QColor kRam(196, 70, 255);
 constexpr QColor kDisk(70, 230, 120);
 constexpr QColor kNet(255, 170, 40);
@@ -58,57 +58,57 @@ constexpr QColor kGpu(80, 220, 140);
 
 const char *kTableStyle = R"(
 QTableWidget {
-    background: #1C2230;
-    alternate-background-color: #242B3C;
-    color: #E8ECF4;
-    border: 1px solid #3A455C;
+    background: rgba(18, 24, 32, 0.85);
+    alternate-background-color: rgba(255, 255, 255, 0.04);
+    color: #E7F2F6;
+    border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 14px;
-    gridline-color: #2A3346;
-    selection-background-color: #2F6F4E;
+    gridline-color: rgba(255, 255, 255, 0.08);
+    selection-background-color: rgba(0, 229, 255, 0.22);
     selection-color: #FFFFFF;
     font-size: 12px;
     outline: none;
 }
 QHeaderView::section {
-    background: #151A24;
-    color: #A8B0C2;
+    background: #121820;
+    color: #8FA3B3;
     border: none;
-    border-bottom: 1px solid #3A455C;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
     padding: 8px;
     font-weight: 600;
 }
 QTableWidget::item {
-    color: #E8ECF4;
+    color: #E7F2F6;
     background: transparent;
     padding: 6px;
 }
 QTableWidget::item:alternate {
-    color: #E8ECF4;
-    background: #242B3C;
+    color: #E7F2F6;
+    background: rgba(255, 255, 255, 0.04);
 }
 QTableWidget::item:selected {
-    color: #FFFFFF;
-    background: #2F6F4E;
+    color: #121820;
+    background: #00E5FF;
 }
 QTableWidget::item:selected:alternate {
-    color: #FFFFFF;
-    background: #2F6F4E;
+    color: #121820;
+    background: #00E5FF;
 }
 QLineEdit {
-    background: #151A24;
-    color: #F2F4F8;
-    border: 1px solid #3A455C;
+    background: rgba(255, 255, 255, 0.06);
+    color: #E7F2F6;
+    border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 10px;
     padding: 8px 12px;
 }
 QPushButton[role="action"] {
-    background: #24304A;
-    color: #F2F4F8;
-    border: 1px solid #3A455C;
+    background: rgba(255, 255, 255, 0.06);
+    color: #E7F2F6;
+    border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 10px;
     padding: 8px 14px;
 }
-QPushButton[role="action"]:hover { background: #314263; }
+QPushButton[role="action"]:hover { background: rgba(0, 229, 255, 0.16); }
 QPushButton[role="danger"] {
     background: #5A2430;
     color: #FFD7DE;
@@ -850,7 +850,7 @@ public:
         setStyleSheet(QStringLiteral(
             "QPushButton { border: none; border-radius: 12px; color: #A8B0C2; background: transparent; font-size: 16px; }"
             "QPushButton:hover { background: rgba(255,255,255,0.06); color: #F2F4F8; }"
-            "QPushButton:checked { background: rgba(0,210,255,0.14); color: #00D2FF; border-left: 3px solid #00D2FF; }"));
+            "QPushButton:checked { background: rgba(0,229,255,0.16); color: #00E5FF; border-left: 3px solid #00E5FF; }"));
     }
 };
 
@@ -864,7 +864,7 @@ SystemManager::SystemManager()
     setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint | Qt::WindowMinMaxButtonsHint);
     resize(kWidth, kHeight);
     setStyleSheet(
-        QStringLiteral("SystemManager { background: #121620; color: #F2F4F8; } QLabel { background: transparent; }") +
+        QStringLiteral("SystemManager { background: #121820; color: #E7F2F6; } QLabel { background: transparent; color: #E7F2F6; }") +
         QString::fromUtf8(kTableStyle));
 
     auto *root = new QHBoxLayout(this);

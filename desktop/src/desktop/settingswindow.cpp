@@ -1,6 +1,7 @@
 #include "desktop/settingswindow.hpp"
 #include "desktop/dockbar.hpp"
 #include "desktop/docksettings.hpp"
+#include "desktop/glassstyle.hpp"
 #include "desktop/monitorlayout.hpp"
 #include "desktop/shelllayout.hpp"
 #include "desktop/wallpapersettings.hpp"
@@ -16,8 +17,10 @@
 #include <QIcon>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QMouseEvent>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
@@ -38,9 +41,23 @@
 
 namespace {
 
-constexpr QColor kBg(18, 22, 32);
-constexpr QColor kPanel(14, 18, 26);
-constexpr QColor kCard(28, 34, 48);
+QIcon pastelIcon(const QColor &color, const QString &glyph)
+{
+    QPixmap pixmap(32, 32);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+    painter.drawEllipse(1, 1, 30, 30);
+    painter.setPen(QColor(30, 30, 46));
+    QFont font = painter.font();
+    font.setBold(true);
+    font.setPointSize(11);
+    painter.setFont(font);
+    painter.drawText(pixmap.rect(), Qt::AlignCenter, glyph);
+    return QIcon(pixmap);
+}
 constexpr QColor kBorder(58, 69, 92);
 constexpr QColor kText(242, 244, 248);
 constexpr QColor kMuted(168, 176, 194);
@@ -169,39 +186,16 @@ SettingsWindow::SettingsWindow(QWidget *parent)
 {
     active_ = this;
     setWindowTitle(QStringLiteral("Ajustes do Sistema"));
-    setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint | Qt::WindowMinMaxButtonsHint);
+    setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
+    setMinimumSize(760, 540);
     resize(kWidth, kHeight);
-    setStyleSheet(QStringLiteral(
-        "SettingsWindow { background: #121620; color: #F2F4F8; }"
-        "QLabel { background: transparent; color: #F2F4F8; }"
-        "QListWidget {"
-        "  background: #0E121A; border: none; color: #A8B0C2; outline: none; padding: 10px;"
-        "}"
-        "QListWidget::item {"
-        "  padding: 12px 14px; border-radius: 10px; margin: 2px 0;"
-        "}"
-        "QListWidget::item:selected {"
-        "  background: rgba(0,122,255,0.22); color: #F2F4F8; font-weight: 600;"
-        "}"
-        "QComboBox {"
-        "  background: #1C2230; color: #F2F4F8; border: 1px solid #3A455C;"
-        "  border-radius: 10px; padding: 8px 12px; min-width: 220px;"
-        "}"
-        "QComboBox QAbstractItemView {"
-        "  background: #1C2230; color: #F2F4F8; selection-background-color: #007AFF;"
-        "}"
-        "QPushButton {"
-        "  background: #24304A; color: #F2F4F8; border: 1px solid #3A455C;"
-        "  border-radius: 10px; padding: 9px 16px;"
-        "}"
-        "QPushButton:hover { background: #314263; }"
-        "QPushButton#applyButton {"
-        "  background: #007AFF; border: none; font-weight: 600;"
-        "}"
-        "QPushButton#applyButton:hover { background: #0A84FF; }"
-        "QSlider { min-height: 22px; }"));
-
     buildUi();
+    applyChrome();
+    updateWindowMask();
+    EdenGlass::watch(this, [this]() {
+        applyChrome();
+        loadAppearanceControls();
+    });
 }
 
 void SettingsWindow::open()
@@ -213,6 +207,7 @@ void SettingsWindow::open()
     active_->refreshMonitors();
     active_->loadDockControls();
     active_->loadWallpaperControls();
+    active_->loadAppearanceControls();
     active_->show();
     active_->raise();
     active_->activateWindow();
@@ -234,48 +229,101 @@ SettingsWindow *SettingsWindow::instance()
 
 void SettingsWindow::buildUi()
 {
-    auto *root = new QHBoxLayout(this);
-    root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(0);
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(16, 12, 16, 16);
+    root->setSpacing(12);
+
+    header_ = new QWidget(this);
+    auto *headerLayout = new QHBoxLayout(header_);
+    headerLayout->setContentsMargins(4, 0, 0, 0);
+    headerLayout->setSpacing(12);
+
+    headerTitle_ = new QLabel(QStringLiteral("Ajustes"), header_);
+    QFont titleFont = headerTitle_->font();
+    titleFont.setPointSize(16);
+    titleFont.setWeight(QFont::Bold);
+    headerTitle_->setFont(titleFont);
+    headerLayout->addWidget(headerTitle_);
+
+    search_ = new QLineEdit(header_);
+    search_->setObjectName(QStringLiteral("settingsSearch"));
+    search_->setPlaceholderText(QStringLiteral("Buscar ajustes"));
+    search_->setClearButtonEnabled(true);
+    headerLayout->addWidget(search_, 1);
+    connect(search_, &QLineEdit::textChanged, this, [this](const QString &text) {
+        filterNavigation(text);
+    });
+
+    const auto traffic = [headerLayout](const QString &name, const QString &tip) {
+        auto *button = new QPushButton;
+        button->setObjectName(name);
+        button->setFixedSize(16, 16);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setToolTip(tip);
+        headerLayout->addWidget(button);
+        return button;
+    };
+    QPushButton *closeButton = traffic(QStringLiteral("trafficClose"), QStringLiteral("Fechar"));
+    QPushButton *minButton = traffic(QStringLiteral("trafficMin"), QStringLiteral("Minimizar"));
+    QPushButton *maxButton = traffic(QStringLiteral("trafficMax"), QStringLiteral("Maximizar"));
+    connect(closeButton, &QPushButton::clicked, this, [this]() { close(); });
+    connect(minButton, &QPushButton::clicked, this, [this]() { showMinimized(); });
+    connect(maxButton, &QPushButton::clicked, this, [this]() {
+        if (isMaximized()) {
+            showNormal();
+        } else {
+            showMaximized();
+        }
+        updateWindowMask();
+    });
+    root->addWidget(header_);
+
+    auto *body = new QHBoxLayout;
+    body->setContentsMargins(0, 0, 0, 0);
+    body->setSpacing(16);
 
     nav_ = new QListWidget(this);
-    nav_->setFixedWidth(210);
-    nav_->addItem(QStringLiteral("Monitores"));
-    nav_->addItem(QStringLiteral("Dock"));
-    nav_->addItem(QStringLiteral("Papel de parede"));
+    nav_->setObjectName(QStringLiteral("sidebar"));
+    nav_->setFixedWidth(230);
+    nav_->setIconSize(QSize(32, 32));
+    const auto addNav = [this](const QString &label, const QColor &color, const QString &glyph, const QString &keywords) {
+        auto *item = new QListWidgetItem(pastelIcon(color, glyph), label);
+        item->setData(Qt::UserRole, keywords);
+        nav_->addItem(item);
+    };
+    addNav(QStringLiteral("Monitores"), QColor(QStringLiteral("#A5D8FF")), QStringLiteral("M"), QStringLiteral("tela display vídeo"));
+    addNav(QStringLiteral("Dock"), QColor(QStringLiteral("#D0BFFF")), QStringLiteral("D"), QStringLiteral("barra ícones lançador"));
+    addNav(QStringLiteral("Papel de parede"), QColor(QStringLiteral("#B2F2BB")), QStringLiteral("P"), QStringLiteral("wallpaper fundo imagem"));
+    addNav(QStringLiteral("Aparência"), QColor(QStringLiteral("#FFD8A8")), QStringLiteral("A"), QStringLiteral("vidro desfoque blur tema claro escuro"));
     nav_->setCurrentRow(0);
     connect(nav_, &QListWidget::currentRowChanged, this, [this](int row) {
         setSection(row);
     });
-    root->addWidget(nav_);
+    body->addWidget(nav_);
 
     auto *content = new QWidget(this);
     auto *contentLayout = new QVBoxLayout(content);
-    contentLayout->setContentsMargins(24, 20, 24, 20);
+    contentLayout->setContentsMargins(8, 4, 4, 0);
     contentLayout->setSpacing(16);
-
-    auto *title = new QLabel(QStringLiteral("Ajustes do Sistema"), content);
-    QFont titleFont = title->font();
-    titleFont.setPointSize(18);
-    titleFont.setWeight(QFont::Bold);
-    title->setFont(titleFont);
-    contentLayout->addWidget(title);
 
     subtitle_ = new QLabel(
         QStringLiteral("Configure o monitor principal e o secundário."),
         content);
-    subtitle_->setStyleSheet(QStringLiteral("color: #A8B0C2;"));
+    subtitle_->setObjectName(QStringLiteral("subtitle"));
     contentLayout->addWidget(subtitle_);
 
     stack_ = new QStackedWidget(content);
     stack_->addWidget(buildMonitorsPage());
     stack_->addWidget(buildDockPage());
     stack_->addWidget(buildWallpaperPage());
+    stack_->addWidget(buildAppearancePage());
     contentLayout->addWidget(stack_, 1);
-    root->addWidget(content, 1);
+    body->addWidget(content, 1);
+    root->addLayout(body, 1);
 
     loadDockControls();
     loadWallpaperControls();
+    loadAppearanceControls();
 }
 
 QWidget *SettingsWindow::buildMonitorsPage()
@@ -286,8 +334,7 @@ QWidget *SettingsWindow::buildMonitorsPage()
     layout->setSpacing(14);
 
     auto *card = new QFrame(page);
-    card->setStyleSheet(QStringLiteral(
-        "QFrame { background: #1C2230; border: 1px solid #3A455C; border-radius: 16px; }"));
+    card->setObjectName(QStringLiteral("glassCard"));
     auto *cardLayout = new QVBoxLayout(card);
     cardLayout->setContentsMargins(18, 16, 18, 16);
     cardLayout->setSpacing(12);
@@ -338,7 +385,7 @@ QWidget *SettingsWindow::buildMonitorsPage()
 
     auto *actions = new QHBoxLayout;
     statusLabel_ = new QLabel(page);
-    statusLabel_->setStyleSheet(QStringLiteral("color: #A8B0C2;"));
+    statusLabel_->setObjectName(QStringLiteral("mutedLabel"));
     actions->addWidget(statusLabel_, 1);
 
     refreshButton_ = new QPushButton(QStringLiteral("Atualizar"), page);
@@ -373,6 +420,9 @@ void SettingsWindow::setSection(int section)
     } else if (index == 2) {
         subtitle_->setText(QStringLiteral("Escolha um papel de parede do Eden ou um arquivo seu."));
         loadWallpaperControls();
+    } else if (index == 3) {
+        subtitle_->setText(QStringLiteral("Vidro da interface, desfoque e intensidade líquida."));
+        loadAppearanceControls();
     } else {
         subtitle_->setText(QStringLiteral("Configure o monitor principal e o secundário."));
     }
@@ -396,29 +446,17 @@ QWidget *makeSliderRow(
 
     auto *name = new QLabel(label, row);
     name->setMinimumWidth(180);
-    name->setStyleSheet(QStringLiteral("color: #F2F4F8;"));
     layout->addWidget(name);
 
     auto *slider = new QSlider(Qt::Horizontal, row);
     slider->setRange(minimum, maximum);
     slider->setValue(value);
-    slider->setStyleSheet(QStringLiteral(
-        "QSlider::groove:horizontal {"
-        "  height: 6px; background: #2A3346; border-radius: 3px;"
-        "}"
-        "QSlider::handle:horizontal {"
-        "  width: 16px; margin: -6px 0; border-radius: 8px;"
-        "  background: #007AFF;"
-        "}"
-        "QSlider::sub-page:horizontal {"
-        "  background: #007AFF; border-radius: 3px;"
-        "}"));
     layout->addWidget(slider, 1);
 
     auto *valueLabel = new QLabel(QString::number(value), row);
+    valueLabel->setObjectName(QStringLiteral("mutedLabel"));
     valueLabel->setMinimumWidth(36);
     valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    valueLabel->setStyleSheet(QStringLiteral("color: #A8B0C2;"));
     layout->addWidget(valueLabel);
 
     *sliderOut = slider;
@@ -436,8 +474,7 @@ QWidget *SettingsWindow::buildDockPage()
     layout->setSpacing(14);
 
     auto *card = new QFrame(page);
-    card->setStyleSheet(QStringLiteral(
-        "QFrame { background: #1C2230; border: 1px solid #3A455C; border-radius: 16px; }"));
+    card->setObjectName(QStringLiteral("glassCard"));
     auto *cardLayout = new QVBoxLayout(card);
     cardLayout->setContentsMargins(18, 16, 18, 16);
     cardLayout->setSpacing(14);
@@ -452,7 +489,7 @@ QWidget *SettingsWindow::buildDockPage()
     auto *hint = new QLabel(
         QStringLiteral("As alterações aparecem na hora. Use Aplicar para salvar."),
         card);
-    hint->setStyleSheet(QStringLiteral("color: #A8B0C2;"));
+    hint->setObjectName(QStringLiteral("mutedLabel"));
     cardLayout->addWidget(hint);
 
     const EdenDock::Settings defaults = EdenDock::defaults();
@@ -502,7 +539,7 @@ QWidget *SettingsWindow::buildDockPage()
 
     auto *actions = new QHBoxLayout;
     dockStatusLabel_ = new QLabel(page);
-    dockStatusLabel_->setStyleSheet(QStringLiteral("color: #A8B0C2;"));
+    dockStatusLabel_->setObjectName(QStringLiteral("mutedLabel"));
     actions->addWidget(dockStatusLabel_, 1);
 
     dockResetButton_ = new QPushButton(QStringLiteral("Restaurar"), page);
@@ -645,8 +682,7 @@ QWidget *SettingsWindow::buildWallpaperPage()
     layout->setSpacing(14);
 
     auto *card = new QFrame(page);
-    card->setStyleSheet(QStringLiteral(
-        "QFrame { background: #1C2230; border: 1px solid #3A455C; border-radius: 16px; }"));
+    card->setObjectName(QStringLiteral("glassCard"));
     auto *cardLayout = new QVBoxLayout(card);
     cardLayout->setContentsMargins(18, 16, 18, 16);
     cardLayout->setSpacing(14);
@@ -661,23 +697,19 @@ QWidget *SettingsWindow::buildWallpaperPage()
     wallpaperPreview_ = new QLabel(card);
     wallpaperPreview_->setMinimumHeight(180);
     wallpaperPreview_->setAlignment(Qt::AlignCenter);
-    wallpaperPreview_->setStyleSheet(QStringLiteral(
-        "QLabel {"
-        "  background: #0E121A;"
-        "  border: 1px solid #3A455C;"
-        "  border-radius: 14px;"
-        "  color: #A8B0C2;"
-        "}"));
+    wallpaperPreview_->setObjectName(QStringLiteral("wallpaperPreview"));
     wallpaperPreview_->setScaledContents(false);
     cardLayout->addWidget(wallpaperPreview_);
 
     wallpaperPathLabel_ = new QLabel(card);
-    wallpaperPathLabel_->setStyleSheet(QStringLiteral("color: #A8B0C2; font-size: 12px;"));
+    wallpaperPathLabel_->setObjectName(QStringLiteral("wallpaperPath"));
     wallpaperPathLabel_->setWordWrap(true);
     cardLayout->addWidget(wallpaperPathLabel_);
 
     auto *galleryLabel = new QLabel(QStringLiteral("Biblioteca do Eden"), card);
-    galleryLabel->setStyleSheet(QStringLiteral("color: #F2F4F8; font-weight: 600;"));
+    QFont galleryFont = galleryLabel->font();
+    galleryFont.setWeight(QFont::DemiBold);
+    galleryLabel->setFont(galleryFont);
     cardLayout->addWidget(galleryLabel);
 
     wallpaperGallery_ = new QListWidget(card);
@@ -687,18 +719,7 @@ QWidget *SettingsWindow::buildWallpaperPage()
     wallpaperGallery_->setMovement(QListWidget::Static);
     wallpaperGallery_->setSpacing(10);
     wallpaperGallery_->setMinimumHeight(150);
-    wallpaperGallery_->setStyleSheet(QStringLiteral(
-        "QListWidget {"
-        "  background: #0E121A; border: 1px solid #3A455C; border-radius: 12px;"
-        "  padding: 10px;"
-        "}"
-        "QListWidget::item {"
-        "  background: #1C2230; border: 1px solid #3A455C; border-radius: 10px;"
-        "  padding: 6px; margin: 2px;"
-        "}"
-        "QListWidget::item:selected {"
-        "  background: rgba(0,122,255,0.22); border: 1px solid #007AFF;"
-        "}"));
+    wallpaperGallery_->setObjectName(QStringLiteral("wallpaperGallery"));
     cardLayout->addWidget(wallpaperGallery_, 1);
 
     connect(wallpaperGallery_, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
@@ -713,7 +734,7 @@ QWidget *SettingsWindow::buildWallpaperPage()
 
     auto *actions = new QHBoxLayout;
     wallpaperStatusLabel_ = new QLabel(page);
-    wallpaperStatusLabel_->setStyleSheet(QStringLiteral("color: #A8B0C2;"));
+    wallpaperStatusLabel_->setObjectName(QStringLiteral("mutedLabel"));
     actions->addWidget(wallpaperStatusLabel_, 1);
 
     wallpaperChooseButton_ = new QPushButton(QStringLiteral("Escolher arquivo…"), page);
@@ -1083,8 +1104,224 @@ void SettingsWindow::applyMonitorLayout()
 void SettingsWindow::paintEvent(QPaintEvent *)
 {
     QPainter painter(this);
-    painter.fillRect(rect(), kBg);
-    painter.fillRect(QRect(0, 0, 210, height()), kPanel);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const int radius = isMaximized() ? 0 : EdenGlass::kRadius;
+    QPainterPath path;
+    path.addRoundedRect(rect(), radius, radius);
+    painter.fillPath(path, EdenGlass::current().windowColor());
+}
+
+void SettingsWindow::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    updateWindowMask();
+}
+
+void SettingsWindow::updateWindowMask()
+{
+    if (isMaximized() || width() <= 0 || height() <= 0) {
+        clearMask();
+        return;
+    }
+
+    QPainterPath path;
+    path.addRoundedRect(rect(), EdenGlass::kRadius, EdenGlass::kRadius);
+    setMask(QRegion(path.toFillPolygon().toPolygon()));
+}
+
+void SettingsWindow::applyChrome()
+{
+    setStyleSheet(EdenGlass::settingsStyleSheet());
+}
+
+void SettingsWindow::filterNavigation(const QString &query)
+{
+    if (nav_ == nullptr) {
+        return;
+    }
+
+    const QString needle = query.trimmed();
+    int firstVisible = -1;
+
+    for (int index = 0; index < nav_->count(); ++index) {
+        QListWidgetItem *item = nav_->item(index);
+        const QString haystack = item->text() + QLatin1Char(' ') + item->data(Qt::UserRole).toString();
+        const bool match = needle.isEmpty() || haystack.contains(needle, Qt::CaseInsensitive);
+        item->setHidden(!match);
+
+        if (match && firstVisible < 0) {
+            firstVisible = index;
+        }
+    }
+
+    if (nav_->currentRow() >= 0 &&
+        nav_->item(nav_->currentRow())->isHidden() &&
+        firstVisible >= 0) {
+        nav_->setCurrentRow(firstVisible);
+    }
+}
+
+void SettingsWindow::mousePressEvent(QMouseEvent *event)
+{
+    const QPoint position = event->position().toPoint();
+    QWidget *child = childAt(position);
+    const bool chrome = position.y() <= 58 &&
+        (child == nullptr || child == header_ || child == headerTitle_);
+
+    if (event->button() == Qt::LeftButton && chrome && !isMaximized()) {
+        dragging_ = true;
+        dragOffset_ = event->globalPosition().toPoint() - frameGeometry().topLeft();
+        event->accept();
+        return;
+    }
+
+    QWidget::mousePressEvent(event);
+}
+
+void SettingsWindow::mouseMoveEvent(QMouseEvent *event)
+{
+    if (dragging_) {
+        move(event->globalPosition().toPoint() - dragOffset_);
+        event->accept();
+        return;
+    }
+
+    QWidget::mouseMoveEvent(event);
+}
+
+void SettingsWindow::mouseReleaseEvent(QMouseEvent *event)
+{
+    dragging_ = false;
+    QWidget::mouseReleaseEvent(event);
+}
+
+QWidget *SettingsWindow::buildAppearancePage()
+{
+    auto *page = new QWidget(stack_);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(14);
+
+    auto *card = new QFrame(page);
+    card->setObjectName(QStringLiteral("glassCard"));
+    auto *cardLayout = new QVBoxLayout(card);
+    cardLayout->setContentsMargins(18, 16, 18, 16);
+    cardLayout->setSpacing(14);
+
+    auto *heading = new QLabel(QStringLiteral("Vidro da interface"), card);
+    QFont headingFont = heading->font();
+    headingFont.setPointSize(13);
+    headingFont.setWeight(QFont::DemiBold);
+    heading->setFont(headingFont);
+    cardLayout->addWidget(heading);
+
+    auto *hint = new QLabel(
+        QStringLiteral("O desfoque e a intensidade líquida mudam o Dock, a barra superior e os widgets. O seletor alterna o vidro claro e o escuro."),
+        card);
+    hint->setObjectName(QStringLiteral("mutedLabel"));
+    hint->setWordWrap(true);
+    cardLayout->addWidget(hint);
+
+    auto *segment = new QFrame(card);
+    segment->setObjectName(QStringLiteral("segmentBox"));
+    auto *segmentLayout = new QHBoxLayout(segment);
+    segmentLayout->setContentsMargins(4, 4, 4, 4);
+    segmentLayout->setSpacing(4);
+    darkSegment_ = new QPushButton(QStringLiteral("Escuro"), segment);
+    lightSegment_ = new QPushButton(QStringLiteral("Claro"), segment);
+    darkSegment_->setObjectName(QStringLiteral("segmentButton"));
+    lightSegment_->setObjectName(QStringLiteral("segmentButton"));
+    darkSegment_->setCheckable(true);
+    lightSegment_->setCheckable(true);
+    darkSegment_->setCursor(Qt::PointingHandCursor);
+    lightSegment_->setCursor(Qt::PointingHandCursor);
+    segmentLayout->addWidget(darkSegment_);
+    segmentLayout->addWidget(lightSegment_);
+    cardLayout->addWidget(segment);
+
+    const EdenGlass::Appearance defaults = EdenGlass::current();
+    cardLayout->addWidget(makeSliderRow(
+        card,
+        QStringLiteral("Intensidade do desfoque"),
+        &blurSlider_,
+        &blurValue_,
+        4,
+        40,
+        defaults.blur));
+    cardLayout->addWidget(makeSliderRow(
+        card,
+        QStringLiteral("Intensidade líquida"),
+        &liquidSlider_,
+        &liquidValue_,
+        0,
+        100,
+        defaults.liquid));
+    cardLayout->addStretch(1);
+    layout->addWidget(card, 1);
+
+    const auto sync = [this]() {
+        if (blurValue_ != nullptr && blurSlider_ != nullptr) {
+            blurValue_->setText(QString::number(blurSlider_->value()));
+        }
+        if (liquidValue_ != nullptr && liquidSlider_ != nullptr) {
+            liquidValue_->setText(QString::number(liquidSlider_->value()));
+        }
+    };
+    connect(darkSegment_, &QPushButton::clicked, this, [this]() {
+        darkSegment_->setChecked(true);
+        lightSegment_->setChecked(false);
+        pushAppearance();
+    });
+    connect(lightSegment_, &QPushButton::clicked, this, [this]() {
+        lightSegment_->setChecked(true);
+        darkSegment_->setChecked(false);
+        pushAppearance();
+    });
+    connect(blurSlider_, &QSlider::valueChanged, this, [this, sync](int) {
+        sync();
+        pushAppearance();
+    });
+    connect(liquidSlider_, &QSlider::valueChanged, this, [this, sync](int) {
+        sync();
+        pushAppearance();
+    });
+
+    return page;
+}
+
+void SettingsWindow::loadAppearanceControls()
+{
+    if (blurSlider_ == nullptr || darkSegment_ == nullptr) {
+        return;
+    }
+
+    const EdenGlass::Appearance look = EdenGlass::current();
+    const QSignalBlocker blockers[] = {
+        QSignalBlocker(blurSlider_),
+        QSignalBlocker(liquidSlider_),
+        QSignalBlocker(darkSegment_),
+        QSignalBlocker(lightSegment_)
+    };
+    (void)blockers;
+    blurSlider_->setValue(look.blur);
+    liquidSlider_->setValue(look.liquid);
+    blurValue_->setText(QString::number(look.blur));
+    liquidValue_->setText(QString::number(look.liquid));
+    darkSegment_->setChecked(look.dark);
+    lightSegment_->setChecked(!look.dark);
+}
+
+void SettingsWindow::pushAppearance()
+{
+    if (blurSlider_ == nullptr || darkSegment_ == nullptr) {
+        return;
+    }
+
+    EdenGlass::Appearance look = EdenGlass::current();
+    look.dark = darkSegment_->isChecked();
+    look.blur = blurSlider_->value();
+    look.liquid = liquidSlider_->value();
+    EdenGlass::update(look);
 }
 
 void SettingsWindow::showEvent(QShowEvent *event)

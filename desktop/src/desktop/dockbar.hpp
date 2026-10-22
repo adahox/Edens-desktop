@@ -73,6 +73,7 @@ private:
         bool closeable = true;
         bool builtin = false;
         int openWindows = 0;
+        bool sawWindow = false;
         qint64 loadingStarted = 0;
         QStringList matchClasses;
         QStringList matchTitles;
@@ -113,6 +114,7 @@ private:
     QVector<QRect> iconRects_;
     QRect barRect_;
     QRect labelRect_;
+    QRect perfRect_;
     QPixmap glass_;
     QPixmap backdrop_;
     QPixmap composed_;
@@ -125,6 +127,7 @@ private:
 
     static DockBar *active_;
 
+    static constexpr int kPerfWidth = 92;
     static constexpr int kPadX = 14;
     static constexpr int kPadY = 10;
     static constexpr int kLabelGap = 8;

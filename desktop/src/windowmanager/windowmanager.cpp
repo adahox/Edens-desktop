@@ -263,9 +263,9 @@ void wallpaperPixel(
     blue = pixel[2];
 }
 
-std::uint8_t mixWhite(std::uint8_t color, int alpha)
+std::uint8_t mixToward(std::uint8_t color, std::uint8_t target, int alpha)
 {
-    return static_cast<std::uint8_t>((color * (255 - alpha) + 255 * alpha) / 255);
+    return static_cast<std::uint8_t>((color * (255 - alpha) + target * alpha) / 255);
 }
 
 bool fillTitleGlass(
@@ -312,7 +312,10 @@ bool fillTitleGlass(
 
     const std::size_t stride = static_cast<std::size_t>(width) * 4;
     pixels.assign(stride * height, 0);
-    const int veil = focused ? 132 : 188;
+    const int veil = focused ? 196 : 217;
+    const std::uint8_t snowRed = 18;
+    const std::uint8_t snowGreen = 24;
+    const std::uint8_t snowBlue = 32;
 
     for (int y = 0; y < static_cast<int>(height); ++y) {
         const float fy = (static_cast<float>(y) + 0.5f) * static_cast<float>(rows) /
@@ -320,7 +323,7 @@ bool fillTitleGlass(
         const int y0 = std::clamp(static_cast<int>(std::floor(fy)), 0, rows - 1);
         const int y1 = std::min(y0 + 1, rows - 1);
         const float yBlend = std::clamp(fy - static_cast<float>(y0), 0.f, 1.f);
-        const int sheen = y < height / 3 ? 70 : 24;
+        const int sheen = y < height / 3 ? 36 : 12;
 
         for (int x = 0; x < static_cast<int>(width); ++x) {
             const float fx = (static_cast<float>(x) + 0.5f) * static_cast<float>(columns) /
@@ -339,7 +342,8 @@ bool fillTitleGlass(
                 const float top = p00[channel] + (p10[channel] - p00[channel]) * xBlend;
                 const float bottom = p01[channel] + (p11[channel] - p01[channel]) * xBlend;
                 const auto blended = static_cast<std::uint8_t>(top + (bottom - top) * yBlend);
-                destination[channel] = mixWhite(mixWhite(blended, veil), sheen);
+                const std::uint8_t snow = channel == 0 ? snowRed : channel == 1 ? snowGreen : snowBlue;
+                destination[channel] = mixToward(mixToward(blended, snow, veil), 255, sheen);
             }
 
             destination[3] = 0;
@@ -358,9 +362,9 @@ void fillSolidBar(
     bool focused,
     std::vector<std::uint8_t>& pixels)
 {
-    const std::uint8_t red = focused ? 0x17 : 0x12;
-    const std::uint8_t green = focused ? 0x1C : 0x14;
-    const std::uint8_t blue = focused ? 0x28 : 0x1C;
+    const std::uint8_t red = 0x12;
+    const std::uint8_t green = focused ? 0x1C : 0x18;
+    const std::uint8_t blue = focused ? 0x24 : 0x20;
     pixels.assign(static_cast<std::size_t>(width) * height * 4, 0);
 
     for (std::size_t index = 0; index < pixels.size(); index += 4) {
@@ -422,6 +426,7 @@ void paintHoverBackground(
     const TitleButtonLayout& button,
     bool glass)
 {
+    (void)glass;
     roundedRect(
         context,
         button.x + 0.5,
@@ -430,11 +435,7 @@ void paintHoverBackground(
         kButtonSize - 1.0,
         5.0);
 
-    if (glass) {
-        cairo_set_source_rgb(context, 0.78, 0.80, 0.84);
-    } else {
-        cairo_set_source_rgb(context, 0.30, 0.34, 0.44);
-    }
+    cairo_set_source_rgba(context, 1.0, 1.0, 1.0, 0.12);
 
     cairo_fill(context);
 }
@@ -466,33 +467,23 @@ void paintTitleChrome(
     }
 
     cairo_t* context = cairo_create(surface);
-    const double ink = glass ? (focused ? 0.110 : 0.227) : (focused ? 0.957 : 0.545);
+    (void)glass;
+    const double ink = focused ? 0.93 : 0.68;
 
-    if (glass) {
-        // Soft frosted hairline — same language as the dock glass edge.
-        if (focused) {
-            cairo_set_source_rgb(context, 0.690, 0.710, 0.745);
-        } else {
-            cairo_set_source_rgb(context, 0.820, 0.824, 0.843);
-        }
-
-        cairo_rectangle(context, 0, height - 1.0, width, 1);
-        cairo_fill(context);
-    } else {
-        const double accentRed = focused ? 0.478 : 0.165;
-        const double accentGreen = focused ? 0.635 : 0.180;
-        const double accentBlue = focused ? 1.0 : 0.227;
-        cairo_set_source_rgb(context, accentRed, accentGreen, accentBlue);
-        cairo_rectangle(context, 12, (height - 14) / 2.0, 3, 14);
-        cairo_fill(context);
-        cairo_rectangle(context, 0, height - 1.0, width, 1);
+    if (focused) {
+        cairo_set_source_rgb(context, 0.0, 0.898, 1.0);
+        cairo_rectangle(context, 14, (height - 14) / 2.0, 3, 14);
         cairo_fill(context);
     }
+
+    cairo_set_source_rgba(context, 1.0, 1.0, 1.0, 0.15);
+    cairo_rectangle(context, 0, height - 1.0, width, 1);
+    cairo_fill(context);
 
     const TitleBarButtons buttons = titleBarButtons(width);
     cairo_select_font_face(
         context,
-        "Sans",
+        "Cantarell",
         CAIRO_FONT_SLANT_NORMAL,
         CAIRO_FONT_WEIGHT_NORMAL);
     cairo_set_font_size(context, 13);
@@ -1416,7 +1407,7 @@ void WindowManager::focusWindow(ManagedWindow& window, xcb_timestamp_t time)
 {
     if (window.minimized) {
         window.minimized = false;
-        xcb_map_window(connection_, window.frame);
+        mapClientFrame(window);
     }
 
     const xcb_window_t previous = focusedFrame_;

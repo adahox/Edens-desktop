@@ -293,6 +293,58 @@ void WindowManager::processUnmapNotify(xcb_generic_event_t* event)
         return;
     }
 
+    const auto attributesCookie =
+        xcb_get_window_attributes(connection_, unmapEvent->window);
+    xcb_generic_error_t* attributesError = nullptr;
+    xcb_get_window_attributes_reply_t* attributes =
+        xcb_get_window_attributes_reply(
+            connection_,
+            attributesCookie,
+            &attributesError);
+    std::free(attributesError);
+
+    const bool stillMapped =
+        attributes != nullptr &&
+        attributes->map_state != XCB_MAP_STATE_UNMAPPED;
+    const bool overrideRedirect =
+        attributes != nullptr && attributes->override_redirect != 0;
+    std::free(attributes);
+
+    // Arrastar uma aba desmapeia e religa override_redirect antes deste evento
+    // ser lido. A janela já está na tela de novo; adotá-la de volta.
+    if (stillMapped && overrideRedirect) {
+        const xcb_window_t client = iterator->first;
+        unmanageWindow(client);
+
+        const uint32_t overrideRedirectOff = 0;
+        xcb_change_window_attributes(
+            connection_,
+            client,
+            XCB_CW_OVERRIDE_REDIRECT,
+            &overrideRedirectOff);
+
+        if (manageWindow(client)) {
+            const auto adopted = windows_.find(client);
+
+            if (adopted != windows_.end()) {
+                ++adopted->second.ignoreUnmap;
+            }
+        }
+
+        return;
+    }
+
+    if (stillMapped) {
+        return;
+    }
+
+    // A janela fora do desktop atual foi só escondida com a moldura. O Chrome
+    // desmapeia o cliente ao perceber isso; soltá-la tira o ícone da barra.
+    if (!iterator->second.sticky &&
+        iterator->second.desktop != currentDesktop_) {
+        return;
+    }
+
     unmanageWindow(iterator->first);
 }
 
@@ -790,8 +842,14 @@ void WindowManager::processMapNotify(xcb_generic_event_t* event)
     if (desktopWindows_.contains(mapEvent->window) || isDesktopWindow(mapEvent->window)) {
         desktopWindows_.insert(mapEvent->window);
         fitDesktopWindow(mapEvent->window);
+        raisePanel();
+        xcb_flush(connection_);
+        return;
     }
 
+    // Aba arrastada do Chrome: a janela mapeia com override_redirect e, sem
+    // isso, nunca entra em _NET_CLIENT_LIST.
+    reclaimUnmanagedWindow(mapEvent->window);
     raisePanel();
     xcb_flush(connection_);
 }
@@ -820,6 +878,7 @@ void WindowManager::processConfigureNotify(xcb_generic_event_t* event)
         return;
     }
 
+    reclaimUnmanagedWindow(configureEvent->window);
     raisePanel();
 }
 
@@ -1183,6 +1242,13 @@ void WindowManager::processPropertyNotify(xcb_generic_event_t* event)
     auto iterator = windows_.find(property->window);
 
     if (iterator == windows_.end()) {
+        return;
+    }
+
+    if (property->atom == netWmDesktop_) {
+        // EWMH: o cliente pede troca de desktop por ClientMessage. Se ele
+        // gravar a propriedade direto, a barra lê o valor errado.
+        restoreClientDesktopProperty(iterator->second);
         return;
     }
 

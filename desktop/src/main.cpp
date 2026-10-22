@@ -9,6 +9,8 @@
 #include "desktop/programsearch.hpp"
 #include "desktop/screenshot.hpp"
 #include "desktop/shelllayout.hpp"
+#include "desktop/notifyhub.hpp"
+#include "desktop/snowtheme.hpp"
 #include "desktop/statusbar.hpp"
 #include "desktop/systemmanager.hpp"
 #include <QTimer>
@@ -171,29 +173,8 @@ int main(int argc, char *argv[])
         app.setStyle(fusion);
     }
 
-    app.setStyleSheet(QStringLiteral(R"(
-        QMenu {
-            background: #1E2430;
-            color: #F2F4F8;
-            border: 1px solid #3A4254;
-            padding: 4px;
-        }
-
-        QMenu::item {
-            padding: 6px 28px;
-            background: transparent;
-        }
-
-        QMenu::item:selected {
-            background: #2F6F4E;
-        }
-
-        QMenu::separator {
-            height: 1px;
-            background: #3A4254;
-            margin: 4px 8px;
-        }
-    )"));
+    EdenSnow::apply(&app);
+    EdenNotify::start();
 
     EdenMonitors::applySaved();
     ensurePolkitAgent();

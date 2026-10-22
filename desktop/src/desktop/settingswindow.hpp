@@ -6,8 +6,11 @@
 
 class QComboBox;
 class QLabel;
+class QLineEdit;
 class QListWidget;
+class QMouseEvent;
 class QPushButton;
+class QResizeEvent;
 class QSlider;
 class QStackedWidget;
 
@@ -34,7 +37,11 @@ public:
 protected:
     void paintEvent(QPaintEvent *event) override;
     void showEvent(QShowEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
 
 private:
     void buildUi();
@@ -50,11 +57,20 @@ private:
     void chooseWallpaperFile();
     void applyWallpaperSettings();
     void resetWallpaperSettings();
+    void loadAppearanceControls();
+    void pushAppearance();
+    void applyChrome();
+    void filterNavigation(const QString &query);
+    void updateWindowMask();
     [[nodiscard]] QVector<MonitorInfo> queryMonitors() const;
     [[nodiscard]] QWidget *buildMonitorsPage();
     [[nodiscard]] QWidget *buildDockPage();
     [[nodiscard]] QWidget *buildWallpaperPage();
+    [[nodiscard]] QWidget *buildAppearancePage();
 
+    QWidget *header_ = nullptr;
+    QLabel *headerTitle_ = nullptr;
+    QLineEdit *search_ = nullptr;
     QListWidget *nav_ = nullptr;
     QStackedWidget *stack_ = nullptr;
     QLabel *subtitle_ = nullptr;
@@ -90,6 +106,15 @@ private:
     QPushButton *wallpaperApplyButton_ = nullptr;
     QPushButton *wallpaperResetButton_ = nullptr;
     QString wallpaperPendingPath_;
+
+    QSlider *blurSlider_ = nullptr;
+    QSlider *liquidSlider_ = nullptr;
+    QLabel *blurValue_ = nullptr;
+    QLabel *liquidValue_ = nullptr;
+    QPushButton *darkSegment_ = nullptr;
+    QPushButton *lightSegment_ = nullptr;
+    QPoint dragOffset_;
+    bool dragging_ = false;
 
     static SettingsWindow *active_;
 

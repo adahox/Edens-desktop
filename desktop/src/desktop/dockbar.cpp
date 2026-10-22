@@ -2,6 +2,9 @@
 #include "desktop/desktoplaunch.hpp"
 #include "desktop/desktopwindow.hpp"
 #include "desktop/docksettings.hpp"
+#include "desktop/glassstyle.hpp"
+#include "desktop/notifyhub.hpp"
+#include "desktop/sysmetrics.hpp"
 #include "desktop/settingswindow.hpp"
 #include "desktop/systemmanager.hpp"
 #include "desktop/wallpapersettings.hpp"
@@ -998,6 +1001,11 @@ QString cacheDockIcon(const QString &label, const QPixmap &icon)
     return path;
 }
 
+class WindowChooser;
+
+WindowChooser *activeWindowChooser = nullptr;
+QString activeWindowChooserLabel;
+
 class WindowChooser final : public QWidget
 {
 public:
@@ -1042,9 +1050,15 @@ public:
         connect(animation_, &QVariantAnimation::finished, this, [this]() {
             if (closing_) {
                 hide();
+                releaseActive();
                 deleteLater();
             }
         });
+    }
+
+    ~WindowChooser() override
+    {
+        releaseActive();
     }
 
     void openAnimated()
@@ -1058,6 +1072,31 @@ public:
         animation_->stop();
         animation_->setDirection(QAbstractAnimation::Forward);
         animation_->start();
+    }
+
+    void dismiss()
+    {
+        beginClose();
+    }
+
+    void reopen()
+    {
+        if (!closing_) {
+            return;
+        }
+
+        closing_ = false;
+        animation_->stop();
+        animation_->setDirection(QAbstractAnimation::Forward);
+        animation_->start();
+        raise();
+        activateWindow();
+        setFocus();
+    }
+
+    [[nodiscard]] bool closing() const
+    {
+        return closing_;
     }
 
 protected:
@@ -1201,6 +1240,16 @@ protected:
     }
 
 private:
+    void releaseActive()
+    {
+        if (activeWindowChooser != this) {
+            return;
+        }
+
+        activeWindowChooser = nullptr;
+        activeWindowChooserLabel.clear();
+    }
+
     void beginClose()
     {
         if (closing_) {
@@ -1325,6 +1374,23 @@ DockBar::DockBar(QWidget *parent)
     syncTimer_->start(700);
     QTimer::singleShot(0, this, [this]() {
         syncOpenWindows();
+    });
+
+    auto *meters = new QTimer(this);
+    connect(meters, &QTimer::timeout, this, [this]() {
+        if (isVisible()) {
+            update();
+        }
+    });
+    meters->start(1000);
+
+    EdenGlass::watch(this, [this]() {
+        refreshGlass();
+        compose();
+        update();
+    });
+    EdenNotify::watch(this, [this]() {
+        update();
     });
 }
 
@@ -1498,7 +1564,7 @@ void DockBar::notifyOpening(
         fallback.fill(Qt::transparent);
         QPainter painter(&fallback);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setBrush(QColor(90, 120, 170));
+        painter.setBrush(QColor(0, 229, 255));
         painter.setPen(Qt::NoPen);
         painter.drawRoundedRect(fallback.rect().adjusted(6, 6, -6, -6), 14, 14);
         entry.icon = fallback;
@@ -1778,7 +1844,7 @@ void DockBar::buildEntries()
             fallback.fill(Qt::transparent);
             QPainter painter(&fallback);
             painter.setRenderHint(QPainter::Antialiasing);
-            painter.setBrush(QColor(90, 120, 170));
+            painter.setBrush(QColor(0, 229, 255));
             painter.setPen(Qt::NoPen);
             painter.drawRoundedRect(fallback.rect().adjusted(6, 6, -6, -6), 14, 14);
             entry.icon = fallback;
@@ -1857,6 +1923,7 @@ void DockBar::relayout()
     }
 
     contentWidth += kPadX - gap;
+    contentWidth += kPerfWidth;
 
     const int barHeight = kPadY + iconHover + 8 + kPadY;
     const int totalHeight = labelH + kLabelGap + barHeight;
@@ -1888,6 +1955,12 @@ void DockBar::relayout()
         cursor += slot + gap;
     }
 
+    perfRect_ = QRect(
+        barRect_.right() - kPerfWidth - 8,
+        barRect_.top() + 8,
+        kPerfWidth,
+        qMax(1, barRect_.height() - 16));
+
     labelRect_ = QRect();
 
     if (hover_ >= 0 && hover_ < entries_.size() && !entries_.at(hover_).separator) {
@@ -1911,7 +1984,7 @@ void DockBar::relayout()
 QPainterPath DockBar::barPath() const
 {
     QPainterPath path;
-    path.addRoundedRect(barRect_.adjusted(0, 0, -1, -1), 22, 22);
+    path.addRoundedRect(barRect_.adjusted(0, 0, -1, -1), EdenGlass::kRadius, EdenGlass::kRadius);
     return path;
 }
 
@@ -1939,7 +2012,7 @@ void DockBar::compose()
     if (!backdrop_.isNull()) {
         painter.drawPixmap(0, 0, backdrop_);
     } else {
-        painter.fillPath(capsule, QColor(236, 236, 240));
+        painter.fillPath(capsule, EdenGlass::current().panelColor());
     }
 
     if (!glass_.isNull()) {
@@ -1975,7 +2048,7 @@ void DockBar::refreshGlass()
     QImage plate(barRect_.size(), QImage::Format_ARGB32_Premultiplied);
 
     if (source.isNull()) {
-        plate.fill(QColor(236, 236, 240));
+        plate.fill(QColor(18, 24, 32));
     } else {
         const QPixmap covered = source.scaled(
             screen_.size(),
@@ -1992,12 +2065,13 @@ void DockBar::refreshGlass()
         QImage piece = covered.copy(sample).toImage();
 
         if (piece.isNull()) {
-            plate.fill(QColor(236, 236, 240));
+            plate.fill(QColor(18, 24, 32));
         } else {
             makeOpaque(piece);
+            const int divisor = EdenGlass::current().blurDivisor();
             const QImage small = piece.scaled(
-                qMax(1, piece.width() / 12),
-                qMax(1, piece.height() / 12),
+                qMax(1, piece.width() / divisor),
+                qMax(1, piece.height() / divisor),
                 Qt::IgnoreAspectRatio,
                 Qt::SmoothTransformation);
             plate = small.scaled(piece.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
@@ -2005,13 +2079,14 @@ void DockBar::refreshGlass()
         }
     }
 
+    const EdenGlass::Appearance look = EdenGlass::current();
     QPainter frost(&plate);
-    frost.fillRect(plate.rect(), QColor(255, 255, 255, 148));
+    frost.fillRect(plate.rect(), look.frostColor());
 
     QLinearGradient sheen(0, 0, 0, plate.height());
-    sheen.setColorAt(0.0, QColor(255, 255, 255, 150));
-    sheen.setColorAt(0.38, QColor(255, 255, 255, 28));
-    sheen.setColorAt(1.0, QColor(255, 255, 255, 70));
+    sheen.setColorAt(0.0, QColor(255, 255, 255, 24 + look.liquid / 5));
+    sheen.setColorAt(0.45, QColor(0, 229, 255, look.dark ? 16 : 8));
+    sheen.setColorAt(1.0, QColor(look.dark ? 30 : 255, look.dark ? 30 : 255, look.dark ? 46 : 255, 30));
     frost.fillRect(plate.rect(), sheen);
     frost.end();
     makeOpaque(plate);
@@ -2058,7 +2133,7 @@ void DockBar::updateMask()
     painter.setRenderHint(QPainter::Antialiasing, false);
     painter.setPen(Qt::NoPen);
     painter.setBrush(Qt::color1);
-    painter.drawRoundedRect(barRect_.adjusted(0, 0, -1, -1), 22, 22);
+    painter.drawRoundedRect(barRect_.adjusted(0, 0, -1, -1), EdenGlass::kRadius, EdenGlass::kRadius);
 
     if (!labelRect_.isNull()) {
         painter.drawRoundedRect(labelRect_.adjusted(-3, -3, 3, 3), 8, 8);
@@ -2209,12 +2284,17 @@ void DockBar::paintEvent(QPaintEvent *)
         painter.drawPixmap(barRect_.topLeft(), glass_);
     }
 
+    painter.setBrush(Qt::NoBrush);
+    const EdenGlass::Appearance look = EdenGlass::current();
+    painter.setPen(QPen(look.borderColor(), 1));
+    painter.drawPath(barPath());
+
     for (int index = 0; index < entries_.size(); ++index) {
         const Entry &entry = entries_.at(index);
         const QRect rect = iconRects_.at(index);
 
         if (entry.separator) {
-            painter.setPen(QPen(QColor(255, 255, 255, 150), 1));
+            painter.setPen(QPen(look.borderColor(), 1));
             const int lineX = rect.center().x();
             painter.drawLine(lineX, barRect_.top() + 16, lineX, barRect_.bottom() - 16);
             continue;
@@ -2227,7 +2307,7 @@ void DockBar::paintEvent(QPaintEvent *)
         if (!entry.icon.isNull()) {
             painter.drawPixmap(drawn, entry.icon);
         } else {
-            painter.setBrush(QColor(80, 110, 160));
+            painter.setBrush(look.accentColor());
             painter.drawRoundedRect(drawn, 12, 12);
         }
 
@@ -2237,22 +2317,79 @@ void DockBar::paintEvent(QPaintEvent *)
             const int span = (dots - 1) * spacing;
             const int baseX = rect.center().x() - span / 2;
             const int baseY = barRect_.bottom() - 8;
-            painter.setBrush(QColor(245, 245, 247));
+            painter.setBrush(look.accentColor());
 
             for (int dot = 0; dot < dots; ++dot) {
                 painter.drawEllipse(QPoint(baseX + dot * spacing, baseY), 2, 2);
             }
         }
+
+        const int badges = EdenNotify::countFor(entry.label, entry.iconName);
+
+        if (badges > 0) {
+            const QString text = badges > 9 ? QStringLiteral("9+") : QString::number(badges);
+            QFont badgeFont = painter.font();
+            badgeFont.setPointSize(8);
+            badgeFont.setBold(true);
+            painter.setFont(badgeFont);
+            const int diameter = text.size() > 1 ? 18 : 16;
+            const QRect badge(drawn.right() - diameter + 6, drawn.top() - 2, diameter, diameter);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(255, 69, 58));
+            painter.drawEllipse(badge);
+            painter.setPen(Qt::white);
+            painter.drawText(badge, Qt::AlignCenter, text);
+        }
+    }
+
+    if (!perfRect_.isEmpty()) {
+        const EdenMetrics::Snapshot metrics = EdenMetrics::current();
+        painter.setPen(QPen(look.borderColor(), 1));
+        painter.drawLine(perfRect_.left() - 4, perfRect_.top() + 6, perfRect_.left() - 4, perfRect_.bottom() - 16);
+
+        const auto ring = [&painter](const QRect &rect, double percent, const QColor &color, const QString &caption) {
+            painter.setBrush(Qt::NoBrush);
+            painter.setPen(QPen(QColor(255, 255, 255, 40), 3));
+            painter.drawEllipse(rect);
+            painter.setPen(QPen(color, 3, Qt::SolidLine, Qt::RoundCap));
+            const int span = static_cast<int>(-std::clamp(percent, 0.0, 100.0) / 100.0 * 360.0 * 16.0);
+            painter.drawArc(rect, 90 * 16, span);
+            QFont font = painter.font();
+            font.setPointSize(7);
+            font.setBold(true);
+            painter.setFont(font);
+            painter.setPen(color);
+            painter.drawText(rect, Qt::AlignCenter, caption);
+        };
+
+        const QRect cpu(perfRect_.left() + 4, perfRect_.top(), 30, 30);
+        const QRect ram(cpu.right() + 8, cpu.top(), 30, 30);
+        ring(cpu, metrics.cpuOk ? metrics.cpuPercent : 0, look.accentColor(), QStringLiteral("CPU"));
+        ring(ram, metrics.ramOk ? metrics.ramPercent : 0, QColor(QStringLiteral("#C4B5FD")), QStringLiteral("RAM"));
+
+        QFont font = painter.font();
+        font.setPointSize(8);
+        font.setBold(false);
+        painter.setFont(font);
+        painter.setPen(look.textColor());
+        const QString temp = metrics.tempOk
+            ? QStringLiteral("%1° / %2°").arg(metrics.tempAvgC).arg(metrics.tempMaxC)
+            : QStringLiteral("—");
+        painter.drawText(
+            QRect(perfRect_.left(), ram.bottom() + 2, perfRect_.width(), 16),
+            Qt::AlignCenter,
+            temp);
     }
 
     if (labelRect_.isNull()) {
         return;
     }
 
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(246, 246, 248));
-    painter.drawRoundedRect(labelRect_, 8, 8);
-    painter.setPen(QColor(28, 28, 30));
+    painter.setFont(font());
+    painter.setPen(QPen(look.borderColor(), 1));
+    painter.setBrush(look.panelColor());
+    painter.drawRoundedRect(labelRect_, 12, 12);
+    painter.setPen(look.textColor());
     painter.drawText(labelRect_, Qt::AlignCenter, entries_.at(hover_).label);
 }
 
@@ -2330,13 +2467,29 @@ void DockBar::syncOpenWindows()
 
         const int previous = entry.openWindows;
         const int count = openWindowCount(index);
+        // Janelas em outro desktop não contam no ponto, mas o app continua
+        // aberto. Zerar o PID aqui faz o Chrome (instância única) sumir ao voltar.
+        const int anywhere = count > 0
+            ? count
+            : EdenDesktop::matchingWindows(
+                  entry.matchClasses,
+                  entry.pids,
+                  entry.matchTitles,
+                  false)
+                  .size();
 
         if (previous != count) {
             entry.openWindows = count;
             changed = true;
         }
 
-        if (count > 0) {
+        if (entry.loading && anywhere == 0) {
+            continue;
+        }
+
+        if (anywhere > 0) {
+            entry.sawWindow = true;
+
             if (!entry.launched || entry.loading) {
                 entry.launched = true;
                 entry.loading = false;
@@ -2346,14 +2499,18 @@ void DockBar::syncOpenWindows()
             continue;
         }
 
-        if (previous > 0) {
-            entry.launched = false;
-            entry.pids.clear();
-            changed = true;
+        if (!entry.sawWindow) {
+            continue;
+        }
 
-            if (entry.ephemeral) {
-                removeEphemeral.push_back(index);
-            }
+        entry.sawWindow = false;
+        entry.launched = false;
+        entry.pids.clear();
+        entry.openWindows = 0;
+        changed = true;
+
+        if (entry.ephemeral) {
+            removeEphemeral.push_back(index);
         }
     }
 
@@ -2391,6 +2548,17 @@ void DockBar::showWindowChooser(int index)
     }
 
     const Entry &entry = entries_.at(index);
+
+    if (activeWindowChooser != nullptr && activeWindowChooserLabel == entry.label) {
+        if (activeWindowChooser->closing()) {
+            activeWindowChooser->reopen();
+        } else {
+            activeWindowChooser->dismiss();
+        }
+
+        return;
+    }
+
     const QVector<EdenDesktop::ClientWindow> windows = EdenDesktop::matchingWindows(
         entry.matchClasses,
         entry.pids,
@@ -2398,6 +2566,14 @@ void DockBar::showWindowChooser(int index)
 
     if (windows.size() < 2) {
         return;
+    }
+
+    if (activeWindowChooser != nullptr) {
+        WindowChooser *previous = activeWindowChooser;
+        activeWindowChooser = nullptr;
+        activeWindowChooserLabel.clear();
+        previous->hide();
+        previous->deleteLater();
     }
 
     QRect bounds = screen_;
@@ -2409,6 +2585,8 @@ void DockBar::showWindowChooser(int index)
     }
 
     auto *chooser = new WindowChooser(windows, entry.icon, bounds);
+    activeWindowChooser = chooser;
+    activeWindowChooserLabel = entry.label;
     chooser->openAnimated();
 }
 
@@ -2455,6 +2633,8 @@ void DockBar::activateOrLaunch(int index)
         return;
     }
 
+    EdenNotify::clear(entry.label, entry.iconName);
+
     if (openWindowCount(index) >= 2) {
         showWindowChooser(index);
         entry.launched = true;
@@ -2462,6 +2642,10 @@ void DockBar::activateOrLaunch(int index)
         entry.openWindows = openWindowCount(index);
         update();
         return;
+    }
+
+    if (activeWindowChooser != nullptr) {
+        activeWindowChooser->dismiss();
     }
 
     if (activateEntry(index)) {

@@ -1,22 +1,24 @@
-/* Eden Explorer — garden glass
-   Canvas mist + ink sidebar + floating sheet. Not a dark settings clone. */
+/* Eden Explorer — vidro escuro.
+   GTK3 não tem backdrop-filter; a translucidez faz o papel do desfoque.
+   Tokens: fundo rgba(30,30,46,0.75), borda rgba(255,255,255,0.12), raio 18px. */
 
 * {
-    font-family: "Segoe UI", "Ubuntu", "Cantarell", sans-serif;
+    font-family: Cantarell, Inter, "Segoe UI", sans-serif;
 }
 
 window,
 #window {
-    background-color: #D5E0E8;
-    color: #17323A;
+    background-color: rgba(30, 30, 46, 0.75);
+    color: #E7F2F6;
 }
 
 headerbar,
 #header-bar {
-    background-color: #D5E0E8;
+    background-color: rgba(30, 30, 46, 0.75);
     background-image: none;
-    color: #17323A;
+    color: #E7F2F6;
     border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
     box-shadow: none;
     min-height: 36px;
     padding: 2px 12px;
@@ -24,22 +26,22 @@ headerbar,
 
 headerbar label,
 #header-bar label {
-    color: #17323A;
+    color: #E7F2F6;
     font-weight: 600;
     letter-spacing: 0.02em;
 }
 
 button.titlebutton {
-    color: #17323A;
+    color: #E7F2F6;
 }
 
 #main_box {
-    background-color: #D5E0E8;
+    background-color: #121820;
     background-image: linear-gradient(
-        145deg,
-        #E7F0F4 0%,
-        #D5E0E8 42%,
-        #C9D8C4 100%
+        160deg,
+        rgba(18, 24, 32, 0.96) 0%,
+        rgba(16, 28, 38, 0.92) 55%,
+        rgba(0, 229, 255, 0.08) 100%
     );
 }
 
@@ -52,23 +54,16 @@ button.titlebutton {
     min-width: 0;
 }
 
-/* —— ink garden sidebar —— */
 #fast_directories {
-    background-color: #0F3D3E;
-    background-image: linear-gradient(
-        180deg,
-        #145455 0%,
-        #0F3D3E 55%,
-        #0B2F30 100%
-    );
+    background-color: rgba(18, 24, 32, 0.72);
     border: none;
-    border-right: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.15);
     padding: 28px 18px 24px 18px;
     min-width: 236px;
 }
 
 #sidebar-brand {
-    color: #F4FFF7;
+    color: #F4FBFD;
     font-size: 34px;
     font-weight: 700;
     letter-spacing: -0.04em;
@@ -76,7 +71,7 @@ button.titlebutton {
 }
 
 #sidebar-title {
-    color: rgba(232, 245, 233, 0.62);
+    color: rgba(231, 242, 246, 0.55);
     font-size: 12px;
     font-weight: 500;
     letter-spacing: 0.14em;
@@ -85,33 +80,34 @@ button.titlebutton {
 
 button.place-button {
     background-color: transparent;
-    border: none;
-    border-radius: 16px;
+    border: 1px solid transparent;
+    border-radius: 14px;
     padding: 11px 12px;
-    color: #E8F5E9;
+    color: #E7F2F6;
     box-shadow: none;
     margin: 2px 0;
 }
 
 button.place-button:hover {
-    background-color: rgba(255, 255, 255, 0.10);
+    background-color: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.15);
 }
 
 button.place-button:active {
-    background-color: rgba(255, 107, 74, 0.28);
+    background-color: rgba(0, 229, 255, 0.18);
+    border-color: rgba(0, 229, 255, 0.45);
 }
 
 button.place-button label {
-    color: #EAF7EE;
+    color: #E7F2F6;
     font-size: 14px;
     font-weight: 500;
 }
 
 button.place-button image {
-    color: #9FD0B0;
+    color: #00E5FF;
 }
 
-/* —— stage / right plane —— */
 #stage {
     background-color: transparent;
     padding: 18px 22px 14px 18px;
@@ -125,7 +121,7 @@ button.place-button image {
 }
 
 #stage-heading {
-    color: #17323A;
+    color: #F4FBFD;
     font-size: 28px;
     font-weight: 700;
     letter-spacing: -0.03em;
@@ -133,33 +129,34 @@ button.place-button image {
 }
 
 #toolbar-row {
-    background-color: rgba(255, 255, 255, 0.55);
-    border: 1px solid rgba(23, 50, 58, 0.08);
-    border-radius: 22px;
+    background-color: rgba(30, 30, 46, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 18px;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
     padding: 8px 10px;
 }
 
 #toolbar-nav {
-    background-color: #0F3D3E;
-    border: none;
-    border-radius: 16px;
+    background-color: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 14px;
     padding: 3px;
 }
 
 button.nav-button {
     background-color: transparent;
     border: none;
-    border-radius: 13px;
+    border-radius: 12px;
     padding: 8px 10px;
-    color: #F4FFF7;
+    color: #E7F2F6;
     box-shadow: none;
     min-width: 38px;
     min-height: 38px;
 }
 
 button.nav-button:hover {
-    background-color: rgba(255, 107, 74, 0.85);
-    color: #FFFFFF;
+    background-color: rgba(0, 229, 255, 0.22);
+    color: #00E5FF;
 }
 
 button.nav-button:disabled {
@@ -171,25 +168,25 @@ button.ghost-button {
     border: none;
     border-radius: 14px;
     padding: 8px;
-    color: #3A5A62;
+    color: #8FA3B3;
     box-shadow: none;
     min-width: 38px;
     min-height: 38px;
 }
 
 button.ghost-button:hover {
-    background-color: rgba(15, 61, 62, 0.10);
-    color: #0F3D3E;
+    background-color: rgba(0, 229, 255, 0.14);
+    color: #00E5FF;
 }
 
 entry.path-entry,
 #path-entry {
     background-color: transparent;
-    color: #17323A;
+    color: #E7F2F6;
     border: none;
     border-radius: 0;
     padding: 8px 6px;
-    caret-color: #FF6B4A;
+    caret-color: #00E5FF;
     box-shadow: none;
     min-height: 34px;
     font-size: 14px;
@@ -204,16 +201,15 @@ entry.path-entry:focus,
 
 entry.path-entry selection,
 #path-entry selection {
-    background-color: #FF6B4A;
-    color: #FFFFFF;
+    background-color: #00E5FF;
+    color: #121820;
 }
 
-/* —— floating file sheet —— */
 #file-sheet {
-    background-color: #F7FBFC;
-    border: 1px solid rgba(23, 50, 58, 0.06);
-    border-radius: 28px;
-    box-shadow: 0 18px 40px rgba(23, 50, 58, 0.10);
+    background-color: rgba(30, 30, 46, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 18px;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
 }
 
 #content,
@@ -223,7 +219,7 @@ entry.path-entry selection,
 #file-area-bg {
     background-color: transparent;
     border: none;
-    border-radius: 28px;
+    border-radius: 16px;
 }
 
 #file-area-layer,
@@ -234,40 +230,40 @@ entry.path-entry selection,
 
 #file-item {
     border: 1px solid transparent;
-    border-radius: 20px;
+    border-radius: 14px;
     padding: 14px 10px 12px 10px;
     background-color: transparent;
 }
 
 #file-item:hover,
 #file-item:backdrop:hover {
-    background-color: rgba(15, 61, 62, 0.07);
-    border-color: rgba(15, 61, 62, 0.08);
+    background-color: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.15);
 }
 
 #file-item:active {
-    background-color: rgba(255, 107, 74, 0.14);
-    border-color: rgba(255, 107, 74, 0.22);
+    background-color: rgba(0, 229, 255, 0.16);
+    border-color: rgba(0, 229, 255, 0.40);
 }
 
 #file-icon {
-    color: #3A5A62;
+    color: #8FA3B3;
 }
 
 #file-item.file-item-directory #file-icon {
-    color: #0F3D3E;
+    color: #00E5FF;
 }
 
 #file-item-label {
     font-size: 12px;
     font-weight: 500;
-    color: #1C3A40;
+    color: #E7F2F6;
 }
 
 #action-bar {
     background-color: transparent;
     border: none;
-    color: #4A6A72;
+    color: #8FA3B3;
     padding: 10px 8px 2px 8px;
     box-shadow: none;
 }
@@ -281,7 +277,7 @@ actionbar > revealer > box {
 }
 
 #status {
-    color: #4A6A72;
+    color: #8FA3B3;
     font-size: 12px;
     font-weight: 500;
     letter-spacing: 0.02em;
@@ -294,12 +290,12 @@ scrollbar {
 }
 
 scrollbar slider {
-    background-color: rgba(15, 61, 62, 0.28);
+    background-color: rgba(0, 229, 255, 0.35);
     border-radius: 999px;
     min-width: 7px;
     min-height: 7px;
 }
 
 scrollbar slider:hover {
-    background-color: rgba(255, 107, 74, 0.75);
+    background-color: #00E5FF;
 }

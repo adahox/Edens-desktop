@@ -188,6 +188,204 @@ bool WindowManager::isDockWindow(xcb_window_t window)
     return hasWindowType(window, wmWindowTypeDock_);
 }
 
+void WindowManager::mapClientFrame(const ManagedWindow& window)
+{
+    if (!isConnected()) {
+        return;
+    }
+
+    xcb_map_window(connection_, window.client);
+    xcb_map_window(connection_, window.frame);
+}
+
+void WindowManager::ensureWindowTypeAtoms()
+{
+    if (wmWindowType_ == XCB_ATOM_NONE) {
+        wmWindowType_ = internAtom("_NET_WM_WINDOW_TYPE");
+    }
+
+    if (wmWindowTypeNormal_ != XCB_ATOM_NONE) {
+        return;
+    }
+
+    wmWindowTypeNormal_ = internAtom("_NET_WM_WINDOW_TYPE_NORMAL");
+
+    static const char* kNames[kTransientPopupTypeCount] = {
+        "_NET_WM_WINDOW_TYPE_MENU",
+        "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU",
+        "_NET_WM_WINDOW_TYPE_POPUP_MENU",
+        "_NET_WM_WINDOW_TYPE_TOOLTIP",
+        "_NET_WM_WINDOW_TYPE_NOTIFICATION",
+        "_NET_WM_WINDOW_TYPE_COMBO",
+        "_NET_WM_WINDOW_TYPE_DND",
+        "_NET_WM_WINDOW_TYPE_SPLASH",
+        "_NET_WM_WINDOW_TYPE_UTILITY",
+        "_NET_WM_WINDOW_TYPE_TOOLBAR"
+    };
+
+    for (int index = 0; index < kTransientPopupTypeCount; ++index) {
+        transientPopupTypes_[index] = internAtom(kNames[index]);
+    }
+}
+
+bool WindowManager::shouldReclaimOverrideRedirect(xcb_window_t window)
+{
+    ensureWindowTypeAtoms();
+
+    if (wmWindowType_ == XCB_ATOM_NONE) {
+        return false;
+    }
+
+    const auto cookie = xcb_get_property(
+        connection_,
+        0,
+        window,
+        wmWindowType_,
+        XCB_ATOM_ATOM,
+        0,
+        32);
+    xcb_get_property_reply_t* reply =
+        xcb_get_property_reply(connection_, cookie, nullptr);
+
+    bool normal = false;
+    bool popup = false;
+    bool typed = false;
+
+    if (reply != nullptr) {
+        const auto* atoms = static_cast<const xcb_atom_t*>(
+            xcb_get_property_value(reply));
+        const int count = xcb_get_property_value_length(reply) /
+                          static_cast<int>(sizeof(xcb_atom_t));
+        typed = count > 0;
+
+        for (int index = 0; index < count; ++index) {
+            if (atoms[index] == wmWindowTypeNormal_) {
+                normal = true;
+            }
+
+            for (const xcb_atom_t popupType : transientPopupTypes_) {
+                if (popupType != XCB_ATOM_NONE && atoms[index] == popupType) {
+                    popup = true;
+                }
+            }
+        }
+
+        std::free(reply);
+    }
+
+    if (popup) {
+        return false;
+    }
+
+    if (normal) {
+        return true;
+    }
+
+    if (typed) {
+        return false;
+    }
+
+    const auto geometryCookie = xcb_get_geometry(connection_, window);
+    xcb_get_geometry_reply_t* geometry =
+        xcb_get_geometry_reply(connection_, geometryCookie, nullptr);
+
+    if (geometry == nullptr || geometry->width < 160 || geometry->height < 160) {
+        std::free(geometry);
+        return false;
+    }
+
+    std::free(geometry);
+
+    const auto classCookie = xcb_get_property(
+        connection_,
+        0,
+        window,
+        XCB_ATOM_WM_CLASS,
+        XCB_ATOM_STRING,
+        0,
+        64);
+    xcb_get_property_reply_t* classReply =
+        xcb_get_property_reply(connection_, classCookie, nullptr);
+    const bool hasClass =
+        classReply != nullptr && xcb_get_property_value_length(classReply) > 0;
+    std::free(classReply);
+    return hasClass;
+}
+
+void WindowManager::reclaimUnmanagedWindow(xcb_window_t window)
+{
+    if (!isConnected() ||
+        window == XCB_WINDOW_NONE ||
+        windows_.contains(window) ||
+        window == panel_ ||
+        window == supportingWindow_ ||
+        desktopWindows_.contains(window) ||
+        findByFrame(window) != nullptr ||
+        findByTitleBar(window) != nullptr ||
+        isDesktopWindow(window) ||
+        isDockWindow(window)) {
+        return;
+    }
+
+    const auto treeCookie = xcb_query_tree(connection_, window);
+    xcb_query_tree_reply_t* tree =
+        xcb_query_tree_reply(connection_, treeCookie, nullptr);
+
+    if (tree == nullptr || tree->parent != screen_->root) {
+        std::free(tree);
+        return;
+    }
+
+    std::free(tree);
+
+    const auto attributesCookie = xcb_get_window_attributes(connection_, window);
+    xcb_get_window_attributes_reply_t* attributes =
+        xcb_get_window_attributes_reply(connection_, attributesCookie, nullptr);
+
+    if (attributes == nullptr ||
+        attributes->map_state == XCB_MAP_STATE_UNMAPPED ||
+        attributes->_class == XCB_WINDOW_CLASS_INPUT_ONLY) {
+        std::free(attributes);
+        return;
+    }
+
+    const bool overrideRedirect = attributes->override_redirect != 0;
+    std::free(attributes);
+
+    if (overrideRedirect && !shouldReclaimOverrideRedirect(window)) {
+        return;
+    }
+
+    bool expectUnmap = false;
+
+    if (overrideRedirect) {
+        xcb_unmap_window(connection_, window);
+        const uint32_t overrideRedirectOff = 0;
+        xcb_change_window_attributes(
+            connection_,
+            window,
+            XCB_CW_OVERRIDE_REDIRECT,
+            &overrideRedirectOff);
+        expectUnmap = true;
+    }
+
+    if (!manageWindow(window)) {
+        if (expectUnmap) {
+            xcb_map_window(connection_, window);
+        }
+
+        return;
+    }
+
+    if (expectUnmap) {
+        const auto iterator = windows_.find(window);
+
+        if (iterator != windows_.end()) {
+            ++iterator->second.ignoreUnmap;
+        }
+    }
+}
+
 void WindowManager::noteDock(xcb_window_t window)
 {
     if (!isConnected() || window == panel_) {
@@ -1150,6 +1348,38 @@ void WindowManager::publishClientState(const ManagedWindow& window)
     }
 }
 
+void WindowManager::restoreClientDesktopProperty(const ManagedWindow& window)
+{
+    if (!isConnected() || netWmDesktop_ == XCB_ATOM_NONE) {
+        return;
+    }
+
+    const uint32_t expected = window.sticky ? kAllDesktops : window.desktop;
+    const auto cookie = xcb_get_property(
+        connection_,
+        0,
+        window.client,
+        netWmDesktop_,
+        XCB_ATOM_CARDINAL,
+        0,
+        1);
+    xcb_get_property_reply_t* reply =
+        xcb_get_property_reply(connection_, cookie, nullptr);
+    bool matches = false;
+
+    if (reply != nullptr && xcb_get_property_value_length(reply) >= 4) {
+        const auto actual =
+            *static_cast<const uint32_t*>(xcb_get_property_value(reply));
+        matches = actual == expected;
+    }
+
+    std::free(reply);
+
+    if (!matches) {
+        publishClientState(window);
+    }
+}
+
 bool WindowManager::clientWantsTitleBar(xcb_window_t client) const
 {
     if (!isConnected() || client == XCB_WINDOW_NONE) {
@@ -1633,7 +1863,7 @@ void WindowManager::switchDesktop(uint32_t desktop)
                              (window.sticky || window.desktop == currentDesktop_);
 
         if (visible) {
-            xcb_map_window(connection_, window.frame);
+            mapClientFrame(window);
 
             if (window.frame == focusedFrame_) {
                 focusedStillVisible = true;
@@ -1867,6 +2097,11 @@ void WindowManager::clearProtocolState()
     wmWindowTypeDesktop_ = XCB_ATOM_NONE;
     wmWindowTypeDock_ = XCB_ATOM_NONE;
     wmWindowTypeDialog_ = XCB_ATOM_NONE;
+    wmWindowTypeNormal_ = XCB_ATOM_NONE;
+
+    for (xcb_atom_t& type : transientPopupTypes_) {
+        type = XCB_ATOM_NONE;
+    }
     wmNormalHints_ = XCB_ATOM_NONE;
     wmState_ = XCB_ATOM_NONE;
     wmChangeState_ = XCB_ATOM_NONE;

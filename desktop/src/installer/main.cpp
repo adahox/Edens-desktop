@@ -1,4 +1,5 @@
 #include "installer/debinstaller.hpp"
+#include "desktop/snowtheme.hpp"
 
 #include <QApplication>
 #include <QFileInfo>
@@ -17,6 +18,8 @@ int main(int argc, char *argv[])
     if (QStyle *fusion = QStyleFactory::create(QStringLiteral("Fusion"))) {
         app.setStyle(fusion);
     }
+
+    EdenSnow::apply(&app);
 
     if (argc < 2) {
         QMessageBox::information(

@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets DBus Network)
 find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb)
@@ -52,6 +52,14 @@ qt_add_executable(eden-desktop
     desktop/src/desktop/systemmanager.cpp
     desktop/src/desktop/settingswindow.hpp
     desktop/src/desktop/settingswindow.cpp
+    desktop/src/desktop/glassstyle.hpp
+    desktop/src/desktop/glassstyle.cpp
+    desktop/src/desktop/sysmetrics.hpp
+    desktop/src/desktop/sysmetrics.cpp
+    desktop/src/desktop/notifyhub.hpp
+    desktop/src/desktop/notifyhub.cpp
+    desktop/src/desktop/desktopwidgets.hpp
+    desktop/src/desktop/desktopwidgets.cpp
     desktop/src/filemanager/filemanagerwindow.hpp
     desktop/src/filemanager/filemanagerwindow.cpp
     desktop/src/windowmanager/windowmanager.hpp
@@ -68,6 +76,8 @@ target_include_directories(eden-desktop
 target_link_libraries(eden-desktop
     PRIVATE
         Qt6::Widgets
+        Qt6::DBus
+        Qt6::Network
         PkgConfig::XCB
         PkgConfig::X11
         PkgConfig::XRANDR

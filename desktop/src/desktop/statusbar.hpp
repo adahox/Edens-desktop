@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QPixmap>
 #include <QWidget>
 
 class QLabel;
@@ -12,7 +13,7 @@ public:
 
     void place(const QRect &screen);
 
-    static constexpr int kBarHeight = 28;
+    static constexpr int kBarHeight = 46;
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -20,6 +21,9 @@ protected:
 
 private:
     void refreshClock();
+    void refreshTray();
+    void refreshGlassPlate();
+    void updateMask();
     void refreshGitButton();
     void openGitLogin();
     void openDesktopSource();
@@ -29,9 +33,18 @@ private:
 
     QRect screen_;
     QLabel *clock_ = nullptr;
+    QLabel *tempLabel_ = nullptr;
+    QLabel *mediaLabel_ = nullptr;
+    QLabel *layoutLabel_ = nullptr;
+    QLabel *netLabel_ = nullptr;
+    QLabel *batteryLabel_ = nullptr;
     QPushButton *sourceButton_ = nullptr;
     QPushButton *gitButton_ = nullptr;
     QPushButton *networkButton_ = nullptr;
     QPushButton *powerButton_ = nullptr;
+    QPixmap glassPlate_;
     bool gitActive_ = false;
+
+    static constexpr int kTopMargin = 10;
+    static constexpr int kRadius = 18;
 };

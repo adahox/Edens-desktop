@@ -390,7 +390,7 @@ void drawKindIcon(QPainter &painter, NetworkMenu::Kind kind, const QRectF &box, 
         shield.lineTo(x + 5, y + 7);
         shield.closeSubpath();
         painter.setBrush(QColor(10, 132, 255, 40));
-        painter.setPen(QPen(QColor(QStringLiteral("#0A84FF")), 1.7));
+        painter.setPen(QPen(QColor(QStringLiteral("#00E5FF")), 1.7));
         painter.drawPath(shield);
         painter.setBrush(Qt::NoBrush);
         painter.drawRoundedRect(QRectF(x + 11.5, y + 12, 5, 6), 1.2, 1.2);
@@ -410,7 +410,7 @@ public:
         , on_(on)
         , enabled_(enabled)
         , progress_(on ? 1.0 : 0.0)
-        , onColor_(onColor.isValid() ? onColor : QColor(QStringLiteral("#0A84FF")))
+        , onColor_(onColor.isValid() ? onColor : QColor(QStringLiteral("#00E5FF")))
     {
         setFixedSize(40, 24);
         setAttribute(Qt::WA_OpaquePaintEvent, false);
@@ -447,9 +447,9 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
 
-        const QColor offTrack = enabled_ ? QColor(QStringLiteral("#C7C7CC"))
-                                         : QColor(QStringLiteral("#D8D8DE"));
-        const QColor onTrack = enabled_ ? onColor_ : QColor(QStringLiteral("#D8D8DE"));
+        const QColor offTrack = enabled_ ? QColor(QStringLiteral("#3A4A5C"))
+                                         : QColor(QStringLiteral("#2A3848"));
+        const QColor onTrack = enabled_ ? onColor_ : QColor(QStringLiteral("#2A3848"));
         const QColor track(
             static_cast<int>(offTrack.red() + (onTrack.red() - offTrack.red()) * progress_),
             static_cast<int>(offTrack.green() + (onTrack.green() - offTrack.green()) * progress_),
@@ -533,14 +533,14 @@ public:
             auto *status = new QLabel(QStringLiteral("Indisponível"));
             status->setAttribute(Qt::WA_TransparentForMouseEvents);
             status->setStyleSheet(QStringLiteral(
-                "QLabel { color: #8E8E93; background: transparent; border: none; font-size: 11px; }"));
+                "QLabel { color: #8FA3B3; background: transparent; border: none; font-size: 11px; }"));
             row->addWidget(status);
             row->addSpacing(6);
         } else if (active_) {
             auto *check = new QLabel(QStringLiteral("✓"));
             check->setAttribute(Qt::WA_TransparentForMouseEvents);
             check->setStyleSheet(QStringLiteral(
-                "QLabel { color: #0A84FF; background: transparent; border: none;"
+                "QLabel { color: #00E5FF; background: transparent; border: none;"
                 " font-size: 13px; font-weight: 700; }"));
             row->addWidget(check);
             row->addSpacing(6);
@@ -578,7 +578,7 @@ protected:
         platePainter.setBrush(QColor(248, 248, 250));
         platePainter.fillPath(path, QColor(248, 248, 250));
         platePainter.setPen(QPen(
-            active_ ? QColor(QStringLiteral("#5AC8FA")) : QColor(QStringLiteral("#D2D2D7")),
+            active_ ? QColor(QStringLiteral("#7AF0FF")) : QColor(QStringLiteral("#2A3848")),
             active_ ? 1.5 : 1.0));
         platePainter.setBrush(Qt::NoBrush);
         platePainter.drawPath(path);
@@ -595,8 +595,8 @@ protected:
         painter.setBrush(active_ ? QColor(10, 132, 255, 24) : QColor(236, 236, 241));
         painter.drawPath(badgePath);
 
-        const QColor ink = active_ ? QColor(QStringLiteral("#0A84FF"))
-                                   : QColor(QStringLiteral("#3A3A3C"));
+        const QColor ink = active_ ? QColor(QStringLiteral("#00E5FF"))
+                                   : QColor(QStringLiteral("#C5D4DE"));
         drawKindIcon(painter, kind_, badge, ink);
 
         const int textLeft = 42;
@@ -605,7 +605,7 @@ protected:
         titleFont.setPointSize(12);
         titleFont.setWeight(QFont::DemiBold);
         painter.setFont(titleFont);
-        painter.setPen(QColor(QStringLiteral("#1C1C1E")));
+        painter.setPen(QColor(QStringLiteral("#E7F2F6")));
 
         if (detail_.isEmpty()) {
             painter.drawText(
@@ -620,7 +620,7 @@ protected:
             QFont detailFont = font();
             detailFont.setPointSize(10);
             painter.setFont(detailFont);
-            painter.setPen(QColor(QStringLiteral("#6E6E73")));
+            painter.setPen(QColor(QStringLiteral("#8FA3B3")));
             painter.drawText(
                 QRect(textLeft, 28, textRight - textLeft, 18),
                 Qt::AlignVCenter | Qt::AlignLeft,
@@ -661,7 +661,7 @@ NetworkMenu::NetworkMenu(QWidget *anchor)
     scroll->setStyleSheet(QStringLiteral(
         "QScrollArea { background: transparent; border: none; }"
         "QScrollBar:vertical { width: 8px; background: transparent; margin: 2px; }"
-        "QScrollBar::handle:vertical { background: #C7C7CC; border-radius: 4px; min-height: 24px; }"
+        "QScrollBar::handle:vertical { background: #3A4A5C; border-radius: 4px; min-height: 24px; }"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"));
 
     body_ = new QWidget;
@@ -733,7 +733,7 @@ protected:
             painter,
             NetworkMenu::Kind::Ethernet,
             QRectF(0, 0, width(), height()),
-            QColor(QStringLiteral("#3A3A3C")));
+            QColor(QStringLiteral("#C5D4DE")));
     }
 };
 
@@ -755,7 +755,7 @@ void NetworkMenu::addHeader()
     font.setWeight(QFont::DemiBold);
     title->setFont(font);
     title->setStyleSheet(QStringLiteral(
-        "QLabel { color: #1C1C1E; background: transparent; border: none; }"));
+        "QLabel { color: #E7F2F6; background: transparent; border: none; }"));
     row->addWidget(title);
     row->addStretch();
 
@@ -764,7 +764,7 @@ void NetworkMenu::addHeader()
     auto *line = new QFrame;
     line->setFixedHeight(1);
     line->setStyleSheet(QStringLiteral(
-        "QFrame { background: #D8D8DE; border: none; max-height: 1px; }"));
+        "QFrame { background: #2A3848; border: none; max-height: 1px; }"));
     bodyLayout_->insertWidget(bodyLayout_->count() - 1, line);
 }
 
@@ -776,7 +776,7 @@ void NetworkMenu::addSection(const QString &title)
     font.setWeight(QFont::DemiBold);
     label->setFont(font);
     label->setStyleSheet(QStringLiteral(
-        "QLabel { color: #8E8E93; background: transparent; border: none;"
+        "QLabel { color: #8FA3B3; background: transparent; border: none;"
         " padding: 4px 4px 0 4px; }"));
     bodyLayout_->insertWidget(bodyLayout_->count() - 1, label);
 }
@@ -840,7 +840,7 @@ void NetworkMenu::rebuild()
         wifiOn,
         hasWifi,
         wifiOn,
-        QColor(QStringLiteral("#0A84FF")),
+        QColor(QStringLiteral("#00E5FF")),
         [this](bool enable) {
             runAndRefresh(
                 QStringLiteral("nmcli"),
@@ -858,7 +858,7 @@ void NetworkMenu::rebuild()
         bluetoothOn,
         hasBluetooth,
         bluetoothOn,
-        QColor(QStringLiteral("#0A84FF")),
+        QColor(QStringLiteral("#00E5FF")),
         [this](bool enable) {
             runAndRefresh(
                 QStringLiteral("bluetoothctl"),
@@ -876,7 +876,7 @@ void NetworkMenu::rebuild()
             wired.connected,
             true,
             wired.connected,
-            QColor(QStringLiteral("#0A84FF")),
+            QColor(QStringLiteral("#00E5FF")),
             [wired](bool enable) {
                 setEthernetEnabled(wired, enable);
             });
@@ -948,7 +948,7 @@ void NetworkMenu::rebuild()
                     active,
                     true,
                     active,
-                    QColor(QStringLiteral("#0A84FF")),
+                    QColor(QStringLiteral("#00E5FF")),
                     [this, ssid, active](bool enable) {
                         if (enable && !active) {
                             runAndRefresh(
@@ -1041,14 +1041,14 @@ void NetworkMenu::composePlate()
     } else if (!behind.isNull()) {
         painter.drawPixmap(rect(), behind, behind.rect());
     } else {
-        painter.fillRect(rect(), QColor(245, 245, 247));
+        painter.fillRect(rect(), QColor(18, 24, 32));
     }
 
     const QRectF box(0.75, 0.75, width() - 1.5, height() - 1.5);
     QPainterPath shape;
     shape.addRoundedRect(box, kRadius, kRadius);
-    painter.fillPath(shape, QColor(255, 255, 255, 214));
-    painter.setPen(QPen(QColor(QStringLiteral("#C7C7CC")), 1.0));
+    painter.fillPath(shape, QColor(18, 24, 32, 217));
+    painter.setPen(QPen(QColor(255, 255, 255, 38), 1.0));
     painter.setBrush(Qt::NoBrush);
     painter.drawPath(shape);
     painter.end();
@@ -1073,8 +1073,8 @@ void NetworkMenu::paintEvent(QPaintEvent *event)
     painter.setRenderHint(QPainter::Antialiasing);
     QPainterPath shape;
     shape.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), kRadius, kRadius);
-    painter.fillPath(shape, QColor(255, 255, 255, 235));
-    painter.setPen(QPen(QColor(QStringLiteral("#C7C7CC")), 1.0));
+    painter.fillPath(shape, QColor(18, 24, 32, 230));
+    painter.setPen(QPen(QColor(255, 255, 255, 38), 1.0));
     painter.drawPath(shape);
 }
 

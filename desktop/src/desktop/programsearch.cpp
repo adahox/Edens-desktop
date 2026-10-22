@@ -212,10 +212,10 @@ ProgramSearch::ProgramSearch()
     edit_->setClearButtonEnabled(true);
     edit_->setStyleSheet(QStringLiteral(
         "QLineEdit {"
-        "  background: #F2F2F7;"
-        "  color: #1C1C1E;"
-        "  border: none;"
-        "  border-radius: 10px;"
+        "  background: rgba(255, 255, 255, 0.06);"
+        "  color: #E7F2F6;"
+        "  border: 1px solid rgba(255, 255, 255, 0.15);"
+        "  border-radius: 12px;"
         "  padding: 10px 12px;"
         "  font-size: 15px;"
         "}"
@@ -229,9 +229,9 @@ ProgramSearch::ProgramSearch()
     list_->setSpacing(2);
     list_->setFocusPolicy(Qt::NoFocus);
     list_->setStyleSheet(QStringLiteral(
-        "QListWidget { background: transparent; border: none; outline: none; color: #1C1C1E; }"
-        "QListWidget::item { padding: 8px 8px; border-radius: 8px; color: #1C1C1E; }"
-        "QListWidget::item:selected { background: #E8E8ED; color: #1C1C1E; }"
+        "QListWidget { background: transparent; border: none; outline: none; color: #E7F2F6; }"
+        "QListWidget::item { padding: 8px 8px; border-radius: 10px; color: #E7F2F6; }"
+        "QListWidget::item:selected { background: rgba(0,229,255,0.18); color: #00E5FF; }"
     ));
 
     layout->addWidget(edit_);
@@ -550,14 +550,14 @@ void ProgramSearch::composePlate()
     if (!behind.isNull()) {
         painter.drawPixmap(rect(), behind, behind.rect());
     } else {
-        painter.fillRect(rect(), Qt::white);
+        painter.fillRect(rect(), QColor(18, 24, 32));
     }
 
     const QRectF box(0.5, 0.5, width() - 1.0, height() - 1.0);
     QPainterPath shape;
     shape.addRoundedRect(box, kRadius, kRadius);
-    painter.fillPath(shape, Qt::white);
-    painter.setPen(QPen(QColor(QStringLiteral("#D2D2D7")), 1.0));
+    painter.fillPath(shape, QColor(18, 24, 32, 217));
+    painter.setPen(QPen(QColor(255, 255, 255, 38), 1.0));
     painter.drawPath(shape);
     painter.end();
 
@@ -574,7 +574,7 @@ void ProgramSearch::paintEvent(QPaintEvent *event)
     QPainter painter(this);
 
     if (plate_.isNull()) {
-        painter.fillRect(rect(), Qt::white);
+        painter.fillRect(rect(), QColor(18, 24, 32));
         return;
     }
 

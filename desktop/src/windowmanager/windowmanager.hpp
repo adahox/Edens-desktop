@@ -79,6 +79,11 @@ private:
     void processMapRequest(xcb_generic_event_t* event);
     void processMapNotify(xcb_generic_event_t* event);
     void processConfigureNotify(xcb_generic_event_t* event);
+    void reclaimUnmanagedWindow(xcb_window_t window);
+    [[nodiscard]] bool shouldReclaimOverrideRedirect(xcb_window_t window);
+    void ensureWindowTypeAtoms();
+    void restoreClientDesktopProperty(const ManagedWindow& window);
+    void mapClientFrame(const ManagedWindow& window);
     void fitDesktopWindow(xcb_window_t window);
     void processDestroyNotify(xcb_generic_event_t* event);
     void processConfigureRequest(xcb_generic_event_t* event);
@@ -211,6 +216,9 @@ private:
     xcb_atom_t wmWindowTypeDesktop_ = XCB_ATOM_NONE;
     xcb_atom_t wmWindowTypeDock_ = XCB_ATOM_NONE;
     xcb_atom_t wmWindowTypeDialog_ = XCB_ATOM_NONE;
+    xcb_atom_t wmWindowTypeNormal_ = XCB_ATOM_NONE;
+    static constexpr int kTransientPopupTypeCount = 10;
+    xcb_atom_t transientPopupTypes_[kTransientPopupTypeCount] = {};
     xcb_atom_t wmNormalHints_ = XCB_ATOM_NONE;
     xcb_atom_t wmState_ = XCB_ATOM_NONE;
     xcb_atom_t wmChangeState_ = XCB_ATOM_NONE;

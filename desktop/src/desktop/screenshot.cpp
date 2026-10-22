@@ -91,10 +91,10 @@ void showToast(const QString &text)
     toast->setAttribute(Qt::WA_DeleteOnClose);
     toast->setStyleSheet(QStringLiteral(
         "QLabel {"
-        "  background: rgba(20, 24, 34, 220);"
-        "  color: #F2F4F8;"
-        "  border: 1px solid #3A455C;"
-        "  border-radius: 12px;"
+        "  background: rgba(18, 24, 32, 0.85);"
+        "  color: #E7F2F6;"
+        "  border: 1px solid rgba(255, 255, 255, 0.15);"
+        "  border-radius: 14px;"
         "  padding: 12px 18px;"
         "  font-size: 13px;"
         "}"));
@@ -171,7 +171,7 @@ protected:
                 painter.drawPixmap(selected, source_, selected);
             }
 
-            painter.setPen(QPen(QColor(QStringLiteral("#0A84FF")), 2));
+            painter.setPen(QPen(QColor(QStringLiteral("#00E5FF")), 2));
             painter.setBrush(Qt::NoBrush);
             painter.drawRect(selected.adjusted(0, 0, -1, -1));
 

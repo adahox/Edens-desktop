@@ -1,5 +1,6 @@
 
 #include "desktopwindow.hpp"
+#include "desktop/desktopwidgets.hpp"
 #include "desktop/desktoplaunch.hpp"
 #include "desktop/dockbar.hpp"
 #include "desktop/wallpapersettings.hpp"
@@ -523,7 +524,7 @@ public:
 
         if ((itemOption.state & QStyle::State_Selected) != 0) {
             painter->setPen(Qt::NoPen);
-            painter->setBrush(QColor(20, 20, 20, 100));
+            painter->setBrush(QColor(0, 229, 255, 48));
             painter->drawRoundedRect(itemOption.rect.adjusted(2, 2, -2, -2), 10, 10);
         } else if ((itemOption.state & QStyle::State_MouseOver) != 0) {
             painter->setPen(Qt::NoPen);
@@ -589,13 +590,13 @@ public:
         editor->setFrame(true);
         editor->setStyleSheet(QStringLiteral(
             "QLineEdit {"
-            "  background: #F5F5F7;"
-            "  color: #1C1C1E;"
-            "  border: 1px solid #007AFF;"
+            "  background: rgba(18, 24, 32, 0.92);"
+            "  color: #E7F2F6;"
+            "  border: 1px solid #00E5FF;"
             "  border-radius: 6px;"
             "  padding: 2px 4px;"
-            "  selection-background-color: #007AFF;"
-            "  selection-color: white;"
+            "  selection-background-color: #00E5FF;"
+            "  selection-color: #121820;"
             "}"));
         return editor;
     }
@@ -835,6 +836,7 @@ DesktopWindow::DesktopWindow(QWidget *parent)
     setWindowTitle("Eden Desktop");
 
     setupFileArea();
+    widgets_ = new DesktopWidgets(this);
 }
 
 DesktopWindow::~DesktopWindow()
@@ -1512,6 +1514,10 @@ void DesktopWindow::refreshWallpaper()
         fileView_->setGeometry(rect());
     }
 
+    if (widgets_ != nullptr) {
+        widgets_->reposition();
+    }
+
     applyWallpaper();
 }
 
@@ -1536,7 +1542,7 @@ void DesktopWindow::paintEvent(QPaintEvent *event)
     QPainter painter(this);
 
     if (wallpaper_.isNull()) {
-        painter.fillRect(rect(), QColor("#20252D"));
+        painter.fillRect(rect(), QColor("#121820"));
         return;
     }
 
