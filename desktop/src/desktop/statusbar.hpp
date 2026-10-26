@@ -44,7 +44,4 @@ private:
     QPushButton *powerButton_ = nullptr;
     QPixmap glassPlate_;
     bool gitActive_ = false;
-
-    static constexpr int kTopMargin = 10;
-    static constexpr int kRadius = 18;
 };

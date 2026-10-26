@@ -86,7 +86,7 @@ QColor Appearance::windowColor() const
 
 QColor Appearance::borderColor() const
 {
-    return dark ? QColor(255, 255, 255, 31) : QColor(255, 255, 255, 102);
+    return dark ? QColor(255, 255, 255, 38) : QColor(18, 24, 32, 36);
 }
 
 QColor Appearance::textColor() const

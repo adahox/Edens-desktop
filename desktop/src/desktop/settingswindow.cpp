@@ -294,7 +294,7 @@ void SettingsWindow::buildUi()
     addNav(QStringLiteral("Monitores"), QColor(QStringLiteral("#A5D8FF")), QStringLiteral("M"), QStringLiteral("tela display vídeo"));
     addNav(QStringLiteral("Dock"), QColor(QStringLiteral("#D0BFFF")), QStringLiteral("D"), QStringLiteral("barra ícones lançador"));
     addNav(QStringLiteral("Papel de parede"), QColor(QStringLiteral("#B2F2BB")), QStringLiteral("P"), QStringLiteral("wallpaper fundo imagem"));
-    addNav(QStringLiteral("Aparência"), QColor(QStringLiteral("#FFD8A8")), QStringLiteral("A"), QStringLiteral("vidro desfoque blur tema claro escuro"));
+    addNav(QStringLiteral("Thema"), QColor(QStringLiteral("#FFD8A8")), QStringLiteral("T"), QStringLiteral("tema theme snow white dark claro escuro"));
     nav_->setCurrentRow(0);
     connect(nav_, &QListWidget::currentRowChanged, this, [this](int row) {
         setSection(row);
@@ -421,7 +421,7 @@ void SettingsWindow::setSection(int section)
         subtitle_->setText(QStringLiteral("Escolha um papel de parede do Eden ou um arquivo seu."));
         loadWallpaperControls();
     } else if (index == 3) {
-        subtitle_->setText(QStringLiteral("Vidro da interface, desfoque e intensidade líquida."));
+        subtitle_->setText(QStringLiteral("Escolha Snow White ou Snow Dark."));
         loadAppearanceControls();
     } else {
         subtitle_->setText(QStringLiteral("Configure o monitor principal e o secundário."));
@@ -1208,7 +1208,7 @@ QWidget *SettingsWindow::buildAppearancePage()
     cardLayout->setContentsMargins(18, 16, 18, 16);
     cardLayout->setSpacing(14);
 
-    auto *heading = new QLabel(QStringLiteral("Vidro da interface"), card);
+    auto *heading = new QLabel(QStringLiteral("Thema"), card);
     QFont headingFont = heading->font();
     headingFont.setPointSize(13);
     headingFont.setWeight(QFont::DemiBold);
@@ -1216,7 +1216,7 @@ QWidget *SettingsWindow::buildAppearancePage()
     cardLayout->addWidget(heading);
 
     auto *hint = new QLabel(
-        QStringLiteral("O desfoque e a intensidade líquida mudam o Dock, a barra superior e os widgets. O seletor alterna o vidro claro e o escuro."),
+        QStringLiteral("Snow White é o padrão. Snow Dark escurece o vidro do Dock, da barra e das janelas."),
         card);
     hint->setObjectName(QStringLiteral("mutedLabel"));
     hint->setWordWrap(true);
@@ -1227,16 +1227,16 @@ QWidget *SettingsWindow::buildAppearancePage()
     auto *segmentLayout = new QHBoxLayout(segment);
     segmentLayout->setContentsMargins(4, 4, 4, 4);
     segmentLayout->setSpacing(4);
-    darkSegment_ = new QPushButton(QStringLiteral("Escuro"), segment);
-    lightSegment_ = new QPushButton(QStringLiteral("Claro"), segment);
+    darkSegment_ = new QPushButton(QStringLiteral("Snow Dark"), segment);
+    lightSegment_ = new QPushButton(QStringLiteral("Snow White"), segment);
     darkSegment_->setObjectName(QStringLiteral("segmentButton"));
     lightSegment_->setObjectName(QStringLiteral("segmentButton"));
     darkSegment_->setCheckable(true);
     lightSegment_->setCheckable(true);
     darkSegment_->setCursor(Qt::PointingHandCursor);
     lightSegment_->setCursor(Qt::PointingHandCursor);
-    segmentLayout->addWidget(darkSegment_);
     segmentLayout->addWidget(lightSegment_);
+    segmentLayout->addWidget(darkSegment_);
     cardLayout->addWidget(segment);
 
     const EdenGlass::Appearance defaults = EdenGlass::current();

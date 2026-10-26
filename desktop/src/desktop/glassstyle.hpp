@@ -10,7 +10,7 @@ namespace EdenGlass {
 
 struct Appearance
 {
-    bool dark = true;
+    bool dark = false;
     int blur = 20;
     int liquid = 70;
 

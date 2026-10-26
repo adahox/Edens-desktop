@@ -92,6 +92,8 @@ qt_add_executable(eden-installer
     desktop/src/installer/main.cpp
     desktop/src/installer/debinstaller.hpp
     desktop/src/installer/debinstaller.cpp
+    desktop/src/desktop/glassstyle.hpp
+    desktop/src/desktop/glassstyle.cpp
 )
 
 target_include_directories(eden-installer
@@ -120,6 +122,7 @@ add_custom_command(
     DEPENDS
         ${EDENS_GRESOURCE_XML}
         ${CMAKE_CURRENT_SOURCE_DIR}/filemanager/data/edens.css
+        ${CMAKE_CURRENT_SOURCE_DIR}/filemanager/data/edens-dark.css
         ${CMAKE_CURRENT_SOURCE_DIR}/filemanager/data/icons/icon-task-manager.png
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/filemanager
     VERBATIM

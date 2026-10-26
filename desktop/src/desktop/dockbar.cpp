@@ -2136,7 +2136,7 @@ void DockBar::updateMask()
     painter.drawRoundedRect(barRect_.adjusted(0, 0, -1, -1), EdenGlass::kRadius, EdenGlass::kRadius);
 
     if (!labelRect_.isNull()) {
-        painter.drawRoundedRect(labelRect_.adjusted(-3, -3, 3, 3), 8, 8);
+        painter.drawRoundedRect(labelRect_, 10, 10);
     }
 
     if (anyLoading()) {
@@ -2386,9 +2386,9 @@ void DockBar::paintEvent(QPaintEvent *)
     }
 
     painter.setFont(font());
-    painter.setPen(QPen(look.borderColor(), 1));
+    painter.setPen(Qt::NoPen);
     painter.setBrush(look.panelColor());
-    painter.drawRoundedRect(labelRect_, 12, 12);
+    painter.drawRoundedRect(labelRect_, 10, 10);
     painter.setPen(look.textColor());
     painter.drawText(labelRect_, Qt::AlignCenter, entries_.at(hover_).label);
 }

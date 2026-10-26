@@ -58,6 +58,7 @@ void DebInstaller::loadPackageInfo()
     const QFileInfo info(debPath_);
     packageName_ = info.completeBaseName();
     packageVersion_.clear();
+    packageArchitecture_.clear();
     packageSummary_.clear();
 
     QProcess process;
@@ -84,6 +85,14 @@ void DebInstaller::loadPackageInfo()
 
     if (lines.size() >= 3) {
         packageSummary_ = lines.at(2).trimmed();
+    }
+
+    QProcess archProcess;
+    archProcess.start(
+        QStringLiteral("dpkg-deb"),
+        {QStringLiteral("-f"), debPath_, QStringLiteral("Architecture")});
+    if (archProcess.waitForFinished(4000) && archProcess.exitCode() == 0) {
+        packageArchitecture_ = QString::fromUtf8(archProcess.readAllStandardOutput()).trimmed();
     }
 
     setStatus(
@@ -312,9 +321,48 @@ void DebInstaller::dropEvent(QDropEvent *event)
     startInstall();
 }
 
+QString DebInstaller::architectureMismatch() const
+{
+    if (packageArchitecture_.isEmpty() || packageArchitecture_ == QLatin1String("all")) {
+        return {};
+    }
+
+    QProcess host;
+    host.start(QStringLiteral("dpkg"), {QStringLiteral("--print-architecture")});
+    if (!host.waitForFinished(4000) || host.exitCode() != 0) {
+        return {};
+    }
+
+    const QString hostArch = QString::fromUtf8(host.readAllStandardOutput()).trimmed();
+    if (hostArch.isEmpty() || packageArchitecture_ == hostArch) {
+        return {};
+    }
+
+    QProcess foreign;
+    foreign.start(QStringLiteral("dpkg"), {QStringLiteral("--print-foreign-architectures")});
+    if (foreign.waitForFinished(4000) && foreign.exitCode() == 0) {
+        const QStringList arches =
+            QString::fromUtf8(foreign.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const QString &arch : arches) {
+            if (arch.trimmed() == packageArchitecture_) {
+                return {};
+            }
+        }
+    }
+
+    return QStringLiteral("Este pacote é %1 e o sistema é %2.").arg(packageArchitecture_, hostArch);
+}
+
 void DebInstaller::startInstall()
 {
     if (installing_ || installed_) {
+        return;
+    }
+
+    const QString mismatch = architectureMismatch();
+    if (!mismatch.isEmpty()) {
+        setStatus(mismatch, true);
+        update();
         return;
     }
 
@@ -390,12 +438,21 @@ void DebInstaller::startInstall()
     installProcess_->setProcessEnvironment(env);
 
     if (!apt.isEmpty()) {
-        // Local .deb + auto-fix deps. $1 is the package path.
+        // $1 is the package path. apt-get -f only finishes a package dpkg
+        // already unpacked, so a rejected .deb must not count as success.
         installProcess_->start(
             pkexec,
             {QStringLiteral("/bin/bash"),
              QStringLiteral("-c"),
-             QStringLiteral("dpkg -i \"$1\" || apt-get install -f -y"),
+             QStringLiteral(
+                 "dpkg -i \"$1\" || apt-get install -f -y || exit 1\n"
+                 "pkg=$(dpkg-deb -f \"$1\" Package)\n"
+                 "ver=$(dpkg-deb -f \"$1\" Version)\n"
+                 "got=$(dpkg-query -W -f '${Status} ${Version}' \"$pkg\" 2>/dev/null || true)\n"
+                 "if [ \"$got\" != \"install ok installed $ver\" ]; then\n"
+                 "  echo \"A instalação de ${pkg} ${ver} não foi concluída.\" >&2\n"
+                 "  exit 1\n"
+                 "fi"),
              QStringLiteral("eden-install"),
              absolute});
         return;

@@ -1951,48 +1951,30 @@ StatusBar::StatusBar(QWidget *parent)
 void StatusBar::place(const QRect &screen)
 {
     screen_ = screen;
-    const int width = qMax(360, screen.width() - kTopMargin * 2);
-    setGeometry(screen.x() + kTopMargin, screen.y() + kTopMargin, width, kBarHeight);
+    setGeometry(screen.x(), screen.y(), qMax(1, screen.width()), kBarHeight);
+    clearMask();
     refreshGlassPlate();
-    updateMask();
+    update();
 }
 
 void StatusBar::paintEvent(QPaintEvent *)
 {
     QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-    const QRectF box(0.5, 0.5, width() - 1.0, height() - 1.0);
-    QPainterPath shape;
-    shape.addRoundedRect(box, kRadius, kRadius);
+    painter.setRenderHint(QPainter::Antialiasing, false);
 
     if (!glassPlate_.isNull()) {
-        painter.setClipPath(shape);
         painter.drawPixmap(rect(), glassPlate_);
-        painter.setClipping(false);
     } else {
-        painter.fillPath(shape, EdenGlass::current().panelColor());
+        painter.fillRect(rect(), EdenGlass::current().panelColor());
     }
 
-    painter.setPen(QPen(EdenGlass::current().borderColor(), 1));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawPath(shape);
+    painter.setPen(EdenGlass::current().borderColor());
+    painter.drawLine(0, height() - 1, width(), height() - 1);
 }
 
 void StatusBar::updateMask()
 {
-    if (width() <= 0 || height() <= 0) {
-        clearMask();
-        return;
-    }
-
-    QBitmap bitmap(size());
-    bitmap.fill(Qt::color0);
-    QPainter painter(&bitmap);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(Qt::color1);
-    painter.drawRoundedRect(rect().adjusted(0, 0, -1, -1), kRadius, kRadius);
-    painter.end();
-    setMask(bitmap);
+    clearMask();
 }
 
 void StatusBar::refreshGlassPlate()
@@ -2240,7 +2222,7 @@ void StatusBar::publishDockStrut()
     replaceAtom(connection, window, typeProperty, dockType);
 
     const xcb_atom_t strut = internAtom(connection, "_NET_WM_STRUT");
-    const int reservedTop = qMax(0, screen_.y()) + kTopMargin + kBarHeight;
+    const int reservedTop = qMax(0, screen_.y()) + kBarHeight;
     const uint32_t reserved[] = {0, 0, static_cast<uint32_t>(reservedTop), 0};
 
     if (strut != XCB_ATOM_NONE) {

@@ -26,6 +26,7 @@ private:
     void loadPackageInfo();
     void startInstall();
     void setStatus(const QString &text, bool error = false);
+    [[nodiscard]] QString architectureMismatch() const;
     [[nodiscard]] QRect packageRect() const;
     [[nodiscard]] QRect targetRect() const;
     [[nodiscard]] QPixmap packageIcon() const;
@@ -33,6 +34,7 @@ private:
     QString debPath_;
     QString packageName_;
     QString packageVersion_;
+    QString packageArchitecture_;
     QString packageSummary_;
     QLabel *statusLabel_ = nullptr;
     QProgressBar *progress_ = nullptr;

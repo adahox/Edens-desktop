@@ -3,5 +3,6 @@
   <gresource prefix="/app/edens">
     <file alias="file-icon-manager.png">data/icons/icon-task-manager.png</file>
     <file alias="edens.css">data/edens.css</file>
+    <file alias="edens-dark.css">data/edens-dark.css</file>
   </gresource>
 </gresources>

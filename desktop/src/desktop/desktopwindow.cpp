@@ -1643,6 +1643,9 @@ void DesktopWindow::showDesktopContextMenu(
 
     menu.addSeparator();
 
+    QAction *widgetsAction =
+        menu.addAction("Configurar widgets");
+
     QAction *settingsAction =
         menu.addAction("Configurações do Eden");
 
@@ -1680,6 +1683,14 @@ void DesktopWindow::showDesktopContextMenu(
                 QProcess::startDetached(executable)) {
                 return;
             }
+        }
+
+        return;
+    }
+
+    if (selectedAction == widgetsAction) {
+        if (widgets_ != nullptr) {
+            widgets_->configure();
         }
 
         return;

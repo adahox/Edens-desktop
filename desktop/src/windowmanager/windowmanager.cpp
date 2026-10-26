@@ -14,7 +14,9 @@
 #include <jpeglib.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <fstream>
 #include <csetjmp>
 #include <csignal>
 #include <cstdint>
@@ -263,6 +265,37 @@ void wallpaperPixel(
     blue = pixel[2];
 }
 
+bool snowDarkTheme()
+{
+    using clock = std::chrono::steady_clock;
+    static clock::time_point checked{};
+    static bool dark = false;
+    const auto now = clock::now();
+
+    if (checked != clock::time_point{} && now - checked < std::chrono::seconds(1)) {
+        return dark;
+    }
+
+    checked = now;
+    dark = false;
+    const char *home = std::getenv("HOME");
+
+    if (home == nullptr) {
+        return false;
+    }
+
+    std::ifstream file(std::string(home) + "/.config/eden/glass");
+    std::string line;
+
+    while (std::getline(file, line)) {
+        if (line.rfind("dark=", 0) == 0) {
+            dark = line.size() > 5 && line[5] == '1';
+        }
+    }
+
+    return dark;
+}
+
 std::uint8_t mixToward(std::uint8_t color, std::uint8_t target, int alpha)
 {
     return static_cast<std::uint8_t>((color * (255 - alpha) + target * alpha) / 255);
@@ -312,10 +345,11 @@ bool fillTitleGlass(
 
     const std::size_t stride = static_cast<std::size_t>(width) * 4;
     pixels.assign(stride * height, 0);
+    const bool dark = snowDarkTheme();
     const int veil = focused ? 196 : 217;
-    const std::uint8_t snowRed = 18;
-    const std::uint8_t snowGreen = 24;
-    const std::uint8_t snowBlue = 32;
+    const std::uint8_t snowRed = dark ? 18 : 244;
+    const std::uint8_t snowGreen = dark ? 24 : 247;
+    const std::uint8_t snowBlue = dark ? 32 : 251;
 
     for (int y = 0; y < static_cast<int>(height); ++y) {
         const float fy = (static_cast<float>(y) + 0.5f) * static_cast<float>(rows) /
@@ -362,9 +396,10 @@ void fillSolidBar(
     bool focused,
     std::vector<std::uint8_t>& pixels)
 {
-    const std::uint8_t red = 0x12;
-    const std::uint8_t green = focused ? 0x1C : 0x18;
-    const std::uint8_t blue = focused ? 0x24 : 0x20;
+    const bool dark = snowDarkTheme();
+    const std::uint8_t red = dark ? 0x12 : 0xF4;
+    const std::uint8_t green = dark ? (focused ? 0x1C : 0x18) : 0xF7;
+    const std::uint8_t blue = dark ? (focused ? 0x24 : 0x20) : 0xFB;
     pixels.assign(static_cast<std::size_t>(width) * height * 4, 0);
 
     for (std::size_t index = 0; index < pixels.size(); index += 4) {
@@ -468,7 +503,8 @@ void paintTitleChrome(
 
     cairo_t* context = cairo_create(surface);
     (void)glass;
-    const double ink = focused ? 0.93 : 0.68;
+    const bool dark = snowDarkTheme();
+    const double ink = dark ? (focused ? 0.93 : 0.68) : (focused ? 0.11 : 0.34);
 
     if (focused) {
         cairo_set_source_rgb(context, 0.0, 0.898, 1.0);
@@ -476,7 +512,11 @@ void paintTitleChrome(
         cairo_fill(context);
     }
 
-    cairo_set_source_rgba(context, 1.0, 1.0, 1.0, 0.15);
+    if (dark) {
+        cairo_set_source_rgba(context, 1.0, 1.0, 1.0, 0.15);
+    } else {
+        cairo_set_source_rgba(context, 0.07, 0.10, 0.13, 0.16);
+    }
     cairo_rectangle(context, 0, height - 1.0, width, 1);
     cairo_fill(context);
 

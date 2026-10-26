@@ -1,0 +1,301 @@
+/* Eden Explorer — vidro escuro.
+   GTK3 não tem backdrop-filter; a translucidez faz o papel do desfoque.
+   Tokens: fundo rgba(30,30,46,0.75), borda rgba(255,255,255,0.12), raio 18px. */
+
+* {
+    font-family: Cantarell, Inter, "Segoe UI", sans-serif;
+}
+
+window,
+#window {
+    background-color: rgba(30, 30, 46, 0.75);
+    color: #E7F2F6;
+}
+
+headerbar,
+#header-bar {
+    background-color: rgba(30, 30, 46, 0.75);
+    background-image: none;
+    color: #E7F2F6;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: none;
+    min-height: 36px;
+    padding: 2px 12px;
+}
+
+headerbar label,
+#header-bar label {
+    color: #E7F2F6;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+button.titlebutton {
+    color: #E7F2F6;
+}
+
+#main_box {
+    background-color: #121820;
+    background-image: linear-gradient(
+        160deg,
+        rgba(18, 24, 32, 0.96) 0%,
+        rgba(16, 28, 38, 0.92) 55%,
+        rgba(0, 229, 255, 0.08) 100%
+    );
+}
+
+#explorer-paned {
+    background-color: transparent;
+}
+
+#explorer-paned separator {
+    background-color: transparent;
+    min-width: 0;
+}
+
+#fast_directories {
+    background-color: rgba(18, 24, 32, 0.72);
+    border: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.15);
+    padding: 28px 18px 24px 18px;
+    min-width: 236px;
+}
+
+#sidebar-brand {
+    color: #F4FBFD;
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    margin: 0 6px 2px 6px;
+}
+
+#sidebar-title {
+    color: rgba(231, 242, 246, 0.55);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    margin: 0 8px 4px 8px;
+}
+
+button.place-button {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 14px;
+    padding: 11px 12px;
+    color: #E7F2F6;
+    box-shadow: none;
+    margin: 2px 0;
+}
+
+button.place-button:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+button.place-button:active {
+    background-color: rgba(0, 229, 255, 0.18);
+    border-color: rgba(0, 229, 255, 0.45);
+}
+
+button.place-button label {
+    color: #E7F2F6;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+button.place-button image {
+    color: #00E5FF;
+}
+
+#stage {
+    background-color: transparent;
+    padding: 18px 22px 14px 18px;
+}
+
+#toolbar {
+    background-color: transparent;
+    border: none;
+    padding: 4px 4px 16px 4px;
+    margin: 0;
+}
+
+#stage-heading {
+    color: #F4FBFD;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin: 0 0 2px 2px;
+}
+
+#toolbar-row {
+    background-color: rgba(30, 30, 46, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 18px;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    padding: 8px 10px;
+}
+
+#toolbar-nav {
+    background-color: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 14px;
+    padding: 3px;
+}
+
+button.nav-button {
+    background-color: transparent;
+    border: none;
+    border-radius: 12px;
+    padding: 8px 10px;
+    color: #E7F2F6;
+    box-shadow: none;
+    min-width: 38px;
+    min-height: 38px;
+}
+
+button.nav-button:hover {
+    background-color: rgba(0, 229, 255, 0.22);
+    color: #00E5FF;
+}
+
+button.nav-button:disabled {
+    opacity: 0.28;
+}
+
+button.ghost-button {
+    background-color: transparent;
+    border: none;
+    border-radius: 14px;
+    padding: 8px;
+    color: #8FA3B3;
+    box-shadow: none;
+    min-width: 38px;
+    min-height: 38px;
+}
+
+button.ghost-button:hover {
+    background-color: rgba(0, 229, 255, 0.14);
+    color: #00E5FF;
+}
+
+entry.path-entry,
+#path-entry {
+    background-color: transparent;
+    color: #E7F2F6;
+    border: none;
+    border-radius: 0;
+    padding: 8px 6px;
+    caret-color: #00E5FF;
+    box-shadow: none;
+    min-height: 34px;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+entry.path-entry:focus,
+#path-entry:focus {
+    border: none;
+    box-shadow: none;
+}
+
+entry.path-entry selection,
+#path-entry selection {
+    background-color: #00E5FF;
+    color: #121820;
+}
+
+#file-sheet {
+    background-color: rgba(30, 30, 46, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 18px;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+#content,
+#scrolled-window,
+#file-scroll-viewport,
+#scrolled-window viewport,
+#file-area-bg {
+    background-color: transparent;
+    border: none;
+    border-radius: 16px;
+}
+
+#file-area-layer,
+#file-area {
+    background-color: transparent;
+    padding: 22px 18px;
+}
+
+#file-item {
+    border: 1px solid transparent;
+    border-radius: 14px;
+    padding: 14px 10px 12px 10px;
+    background-color: transparent;
+}
+
+#file-item:hover,
+#file-item:backdrop:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+#file-item:active {
+    background-color: rgba(0, 229, 255, 0.16);
+    border-color: rgba(0, 229, 255, 0.40);
+}
+
+#file-icon {
+    color: #8FA3B3;
+}
+
+#file-item.file-item-directory #file-icon {
+    color: #00E5FF;
+}
+
+#file-item-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: #E7F2F6;
+}
+
+#action-bar {
+    background-color: transparent;
+    border: none;
+    color: #8FA3B3;
+    padding: 10px 8px 2px 8px;
+    box-shadow: none;
+}
+
+#action-bar revealer box,
+actionbar > revealer > box {
+    background-color: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+}
+
+#status {
+    color: #8FA3B3;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    padding: 0 6px;
+}
+
+scrollbar {
+    background: transparent;
+    margin: 4px;
+}
+
+scrollbar slider {
+    background-color: rgba(0, 229, 255, 0.35);
+    border-radius: 999px;
+    min-width: 7px;
+    min-height: 7px;
+}
+
+scrollbar slider:hover {
+    background-color: #00E5FF;
+}

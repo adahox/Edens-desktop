@@ -10,9 +10,10 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPalette>
 #include <QProcess>
 #include <QPushButton>
-#include <QResizeEvent>
+#include <QRegion>
 #include <QScreen>
 #include <QScrollArea>
 #include <QSet>
@@ -26,49 +27,13 @@
 
 #include <algorithm>
 #include <functional>
+#include <memory>
+#include <utility>
 
 namespace {
 
-QString runCapture(const QString &program, const QStringList &arguments)
+QStringList splitLines(const QString &output)
 {
-    const QString executable = QStandardPaths::findExecutable(program);
-
-    if (executable.isEmpty()) {
-        return {};
-    }
-
-    QProcess process;
-    process.setProcessChannelMode(QProcess::MergedChannels);
-    process.start(executable, arguments);
-
-    if (!process.waitForStarted(2000) || !process.waitForFinished(5000)) {
-        process.kill();
-        return {};
-    }
-
-    return QString::fromUtf8(process.readAll()).trimmed();
-}
-
-bool runOk(const QString &program, const QStringList &arguments)
-{
-    const QString executable = QStandardPaths::findExecutable(program);
-
-    if (executable.isEmpty()) {
-        return false;
-    }
-
-    QProcess process;
-    process.start(executable, arguments);
-    return process.waitForStarted(2000) &&
-           process.waitForFinished(8000) &&
-           process.exitStatus() == QProcess::NormalExit &&
-           process.exitCode() == 0;
-}
-
-QStringList nmcliLines(const QStringList &arguments)
-{
-    const QString output = runCapture(QStringLiteral("nmcli"), arguments);
-
     if (output.isEmpty()) {
         return {};
     }
@@ -76,22 +41,14 @@ QStringList nmcliLines(const QStringList &arguments)
     return output.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
 }
 
-bool wifiRadioEnabled()
+bool wifiRadioEnabled(const QString &value)
 {
-    const QString value = runCapture(
-        QStringLiteral("nmcli"),
-        {QStringLiteral("radio"), QStringLiteral("wifi")});
     return value.contains(QStringLiteral("enabled"), Qt::CaseInsensitive);
 }
 
-bool wifiHardwarePresent()
+bool wifiHardwarePresent(const QString &output)
 {
-    for (const QString &line : nmcliLines({
-             QStringLiteral("-t"),
-             QStringLiteral("-f"),
-             QStringLiteral("TYPE"),
-             QStringLiteral("device")
-         })) {
+    for (const QString &line : splitLines(output)) {
         if (line.compare(QStringLiteral("wifi"), Qt::CaseInsensitive) == 0) {
             return true;
         }
@@ -100,18 +57,14 @@ bool wifiHardwarePresent()
     return false;
 }
 
-bool bluetoothAvailable()
+bool bluetoothAvailable(const QString &listOutput)
 {
     return !QStandardPaths::findExecutable(QStringLiteral("bluetoothctl")).isEmpty() &&
-           !runCapture(QStringLiteral("bluetoothctl"), {QStringLiteral("list")}).isEmpty();
+           !listOutput.trimmed().isEmpty();
 }
 
-bool bluetoothPowered()
+bool bluetoothPowered(const QString &output)
 {
-    const QString output = runCapture(
-        QStringLiteral("bluetoothctl"),
-        {QStringLiteral("show")});
-
     for (const QString &line : output.split(QLatin1Char('\n'))) {
         if (line.contains(QStringLiteral("Powered:"))) {
             return line.contains(QStringLiteral("yes"), Qt::CaseInsensitive);
@@ -119,6 +72,65 @@ bool bluetoothPowered()
     }
 
     return false;
+}
+
+void captureMany(
+    QObject *context,
+    const QVector<QPair<QString, QStringList>> &jobs,
+    const std::function<void(QVector<QString>)> &done)
+{
+    auto remaining = std::make_shared<int>(jobs.size());
+    auto outputs = std::make_shared<QVector<QString>>(jobs.size());
+    auto settled = std::make_shared<QVector<char>>(jobs.size(), 0);
+
+    if (jobs.isEmpty()) {
+        done({});
+        return;
+    }
+
+    const auto finishOne = [=](int index, const QString &text) {
+        if (settled->at(index) != 0) {
+            return;
+        }
+
+        (*settled)[index] = 1;
+        (*outputs)[index] = text;
+
+        if (--(*remaining) == 0 && done) {
+            done(*outputs);
+        }
+    };
+
+    for (int index = 0; index < jobs.size(); ++index) {
+        const QString executable = QStandardPaths::findExecutable(jobs.at(index).first);
+
+        if (executable.isEmpty()) {
+            finishOne(index, {});
+            continue;
+        }
+
+        auto *process = new QProcess(context);
+        process->setProcessChannelMode(QProcess::MergedChannels);
+        const auto settle = [process, finishOne, index](const QString &text) {
+            const QString output = text;
+            process->deleteLater();
+            finishOne(index, output);
+        };
+        QObject::connect(process, &QProcess::finished, context, [process, settle](int, QProcess::ExitStatus) {
+            settle(QString::fromUtf8(process->readAll()).trimmed());
+        });
+        QObject::connect(process, &QProcess::errorOccurred, context, [settle](QProcess::ProcessError) {
+            settle({});
+        });
+
+        auto *timer = new QTimer(process);
+        timer->setSingleShot(true);
+        QObject::connect(timer, &QTimer::timeout, process, [process]() {
+            process->kill();
+        });
+        timer->start(7000);
+        process->start(executable, jobs.at(index).second);
+    }
 }
 
 struct WifiNetwork
@@ -129,19 +141,12 @@ struct WifiNetwork
     QString security;
 };
 
-QVector<WifiNetwork> wifiNetworks()
+QVector<WifiNetwork> wifiNetworks(const QString &output)
 {
     QVector<WifiNetwork> networks;
     QSet<QString> seen;
 
-    for (const QString &line : nmcliLines({
-             QStringLiteral("-t"),
-             QStringLiteral("-f"),
-             QStringLiteral("SSID,SIGNAL,IN-USE,SECURITY"),
-             QStringLiteral("device"),
-             QStringLiteral("wifi"),
-             QStringLiteral("list")
-         })) {
+    for (const QString &line : splitLines(output)) {
         const QStringList parts = line.split(QLatin1Char(':'));
 
         if (parts.size() < 3) {
@@ -180,19 +185,12 @@ struct VpnConnection
     bool active = false;
 };
 
-QVector<VpnConnection> vpnConnections()
+QVector<VpnConnection> vpnConnections(const QString &activeOutput, const QString &allOutput)
 {
     QVector<VpnConnection> connections;
     QSet<QString> active;
 
-    for (const QString &line : nmcliLines({
-             QStringLiteral("-t"),
-             QStringLiteral("-f"),
-             QStringLiteral("NAME,TYPE"),
-             QStringLiteral("connection"),
-             QStringLiteral("show"),
-             QStringLiteral("--active")
-         })) {
+    for (const QString &line : splitLines(activeOutput)) {
         const QStringList parts = line.split(QLatin1Char(':'));
 
         if (parts.size() >= 2 &&
@@ -201,13 +199,7 @@ QVector<VpnConnection> vpnConnections()
         }
     }
 
-    for (const QString &line : nmcliLines({
-             QStringLiteral("-t"),
-             QStringLiteral("-f"),
-             QStringLiteral("NAME,TYPE"),
-             QStringLiteral("connection"),
-             QStringLiteral("show")
-         })) {
+    for (const QString &line : splitLines(allOutput)) {
         const QStringList parts = line.split(QLatin1Char(':'));
 
         if (parts.size() < 2 ||
@@ -239,17 +231,11 @@ QString &lastEthernetConnection()
     return name;
 }
 
-WiredInfo wiredInfo()
+WiredInfo wiredInfo(const QString &output)
 {
     WiredInfo info;
 
-    for (const QString &line : nmcliLines({
-             QStringLiteral("-t"),
-             QStringLiteral("-f"),
-             QStringLiteral("DEVICE,TYPE,STATE,CONNECTION"),
-             QStringLiteral("device"),
-             QStringLiteral("status")
-         })) {
+    for (const QString &line : splitLines(output)) {
         const QStringList parts = line.split(QLatin1Char(':'));
 
         if (parts.size() < 4 ||
@@ -289,40 +275,6 @@ WiredInfo wiredInfo()
     }
 
     return info;
-}
-
-bool setEthernetEnabled(const WiredInfo &wired, bool enable)
-{
-    if (wired.device.isEmpty()) {
-        return false;
-    }
-
-    if (enable) {
-        if (!wired.connection.isEmpty() &&
-            runOk(
-                QStringLiteral("nmcli"),
-                {QStringLiteral("connection"), QStringLiteral("up"), wired.connection})) {
-            return true;
-        }
-
-        return runOk(
-            QStringLiteral("nmcli"),
-            {QStringLiteral("device"), QStringLiteral("connect"), wired.device});
-    }
-
-    if (runOk(
-            QStringLiteral("nmcli"),
-            {QStringLiteral("device"), QStringLiteral("disconnect"), wired.device})) {
-        return true;
-    }
-
-    if (!wired.connection.isEmpty()) {
-        return runOk(
-            QStringLiteral("nmcli"),
-            {QStringLiteral("connection"), QStringLiteral("down"), wired.connection});
-    }
-
-    return false;
 }
 
 QPixmap blurredBackdrop(const QPixmap &source)
@@ -645,8 +597,15 @@ NetworkMenu::NetworkMenu(QWidget *anchor)
     : QWidget(nullptr, Qt::Popup | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint)
     , anchor_(anchor)
 {
+    setObjectName(QStringLiteral("edenNetworkMenu"));
     setAttribute(Qt::WA_DeleteOnClose);
-    setAttribute(Qt::WA_OpaquePaintEvent);
+    setAttribute(Qt::WA_TranslucentBackground);
+    setAttribute(Qt::WA_NoSystemBackground);
+    setAutoFillBackground(false);
+    QPalette glass = palette();
+    glass.setColor(QPalette::Window, Qt::transparent);
+    setPalette(glass);
+    setStyleSheet(QStringLiteral("#edenNetworkMenu { background: transparent; border: none; }"));
     setFixedWidth(kWidth);
     setMouseTracking(true);
 
@@ -658,14 +617,22 @@ NetworkMenu::NetworkMenu(QWidget *anchor)
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setAutoFillBackground(false);
+    scroll->viewport()->setAutoFillBackground(false);
+    QPalette viewPalette = scroll->viewport()->palette();
+    viewPalette.setColor(QPalette::Base, Qt::transparent);
+    viewPalette.setColor(QPalette::Window, Qt::transparent);
+    scroll->viewport()->setPalette(viewPalette);
     scroll->setStyleSheet(QStringLiteral(
         "QScrollArea { background: transparent; border: none; }"
+        "QScrollArea > QWidget > QWidget { background: transparent; }"
         "QScrollBar:vertical { width: 8px; background: transparent; margin: 2px; }"
         "QScrollBar::handle:vertical { background: #3A4A5C; border-radius: 4px; min-height: 24px; }"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"));
 
     body_ = new QWidget;
-    body_->setStyleSheet(QStringLiteral("background: transparent;"));
+    body_->setAutoFillBackground(false);
+    body_->setStyleSheet(QStringLiteral("background: transparent; border: none;"));
     bodyLayout_ = new QVBoxLayout(body_);
     bodyLayout_->setContentsMargins(0, 0, 0, 0);
     bodyLayout_->setSpacing(6);
@@ -684,11 +651,15 @@ void NetworkMenu::open(QPushButton *anchor)
         return;
     }
 
+    if (QWidget *popup = QApplication::activePopupWidget()) {
+        if (popup->objectName() == QLatin1String("edenNetworkMenu")) {
+            popup->close();
+            return;
+        }
+    }
+
     auto *menu = new NetworkMenu(anchor);
-    menu->rebuild();
-    menu->placeNearAnchor();
-    menu->hide();
-    menu->composePlate();
+    menu->loadAsync();
     menu->show();
     menu->raise();
 }
@@ -801,38 +772,157 @@ void NetworkMenu::addCard(
         toggleOn,
         body_);
 
-    if (available) {
-        card->setToggleCallback([this, enabled, onToggle]() {
+    if (available && onToggle) {
+        card->setToggleCallback([enabled, onToggle]() {
             onToggle(!enabled);
-            scheduleRefresh();
         });
     }
 
     bodyLayout_->insertWidget(bodyLayout_->count() - 1, card);
 }
 
-void NetworkMenu::scheduleRefresh()
+void NetworkMenu::runAndRefresh(const QString &program, const QStringList &arguments)
 {
-    QTimer::singleShot(280, this, [this]() {
-        rebuild();
+    runFirstOk({{program, arguments}});
+}
+
+void NetworkMenu::runFirstOk(const QVector<QPair<QString, QStringList>> &steps)
+{
+    if (busy_) {
+        return;
+    }
+
+    busy_ = true;
+    runStep(steps, 0);
+}
+
+void NetworkMenu::runStep(const QVector<QPair<QString, QStringList>> &steps, int index)
+{
+    const auto finished = [this]() {
+        busy_ = false;
+        loadAsync();
+    };
+
+    if (index >= steps.size()) {
+        finished();
+        return;
+    }
+
+    const QString executable = QStandardPaths::findExecutable(steps.at(index).first);
+
+    if (executable.isEmpty()) {
+        runStep(steps, index + 1);
+        return;
+    }
+
+    auto *process = new QProcess(this);
+    auto settled = std::make_shared<bool>(false);
+    const auto done = [this, process, settled, steps, index](bool ok) {
+        if (*settled) {
+            return;
+        }
+
+        *settled = true;
+        process->deleteLater();
+
+        if (ok) {
+            busy_ = false;
+            loadAsync();
+            return;
+        }
+
+        runStep(steps, index + 1);
+    };
+    connect(process, &QProcess::finished, this, [process, done](int code, QProcess::ExitStatus status) {
+        done(status == QProcess::NormalExit && code == 0);
+    });
+    connect(process, &QProcess::errorOccurred, this, [done](QProcess::ProcessError) {
+        done(false);
+    });
+    process->start(executable, steps.at(index).second);
+}
+
+void NetworkMenu::loadAsync()
+{
+    const int ticket = ++probeTicket_;
+
+    if (!populated_) {
+        showPending();
+        placeNearAnchor();
+        composePlate();
+    }
+
+    const QVector<QPair<QString, QStringList>> jobs = {
+        {QStringLiteral("nmcli"), {QStringLiteral("radio"), QStringLiteral("wifi")}},
+        {QStringLiteral("nmcli"),
+         {QStringLiteral("-t"), QStringLiteral("-f"), QStringLiteral("TYPE"), QStringLiteral("device")}},
+        {QStringLiteral("bluetoothctl"), {QStringLiteral("list")}},
+        {QStringLiteral("bluetoothctl"), {QStringLiteral("show")}},
+        {QStringLiteral("nmcli"),
+         {QStringLiteral("-t"),
+          QStringLiteral("-f"),
+          QStringLiteral("DEVICE,TYPE,STATE,CONNECTION"),
+          QStringLiteral("device"),
+          QStringLiteral("status")}},
+        {QStringLiteral("nmcli"),
+         {QStringLiteral("-t"),
+          QStringLiteral("-f"),
+          QStringLiteral("NAME,TYPE"),
+          QStringLiteral("connection"),
+          QStringLiteral("show"),
+          QStringLiteral("--active")}},
+        {QStringLiteral("nmcli"),
+         {QStringLiteral("-t"),
+          QStringLiteral("-f"),
+          QStringLiteral("NAME,TYPE"),
+          QStringLiteral("connection"),
+          QStringLiteral("show")}},
+        {QStringLiteral("nmcli"),
+         {QStringLiteral("-t"),
+          QStringLiteral("-f"),
+          QStringLiteral("SSID,SIGNAL,IN-USE,SECURITY"),
+          QStringLiteral("device"),
+          QStringLiteral("wifi"),
+          QStringLiteral("list")}}
+    };
+
+    captureMany(this, jobs, [this, ticket](QVector<QString> fields) {
+        if (ticket != probeTicket_) {
+            return;
+        }
+
+        populated_ = true;
+        populate(fields);
         placeNearAnchor();
         composePlate();
         update();
     });
 }
 
-void NetworkMenu::runAndRefresh(const QString &program, const QStringList &arguments)
-{
-    runOk(program, arguments);
-}
-
-void NetworkMenu::rebuild()
+void NetworkMenu::showPending()
 {
     clearRows();
     addHeader();
 
-    const bool hasWifi = wifiHardwarePresent();
-    const bool wifiOn = hasWifi && wifiRadioEnabled();
+    auto *loading = new QLabel(QStringLiteral("Carregando conexões…"));
+    loading->setStyleSheet(QStringLiteral(
+        "QLabel { color: #AEAEB2; background: transparent; border: none;"
+        " padding: 8px 6px; }"));
+    bodyLayout_->insertWidget(bodyLayout_->count() - 1, loading);
+    adjustSize();
+}
+
+void NetworkMenu::populate(const QVector<QString> &fields)
+{
+    const auto field = [&fields](int index) {
+        return index >= 0 && index < fields.size() ? fields.at(index) : QString();
+    };
+
+    clearRows();
+    addHeader();
+
+    const bool hasWifi = wifiHardwarePresent(field(1));
+    const bool wifiOn = hasWifi && wifiRadioEnabled(field(0));
     addCard(
         Kind::Wifi,
         QStringLiteral("Wi‑Fi"),
@@ -849,8 +939,8 @@ void NetworkMenu::rebuild()
                  enable ? QStringLiteral("on") : QStringLiteral("off")});
         });
 
-    const bool hasBluetooth = bluetoothAvailable();
-    const bool bluetoothOn = hasBluetooth && bluetoothPowered();
+    const bool hasBluetooth = bluetoothAvailable(field(2));
+    const bool bluetoothOn = hasBluetooth && bluetoothPowered(field(3));
     addCard(
         Kind::Bluetooth,
         QStringLiteral("Bluetooth"),
@@ -866,7 +956,7 @@ void NetworkMenu::rebuild()
                  enable ? QStringLiteral("on") : QStringLiteral("off")});
         });
 
-    const WiredInfo wired = wiredInfo();
+    const WiredInfo wired = wiredInfo(field(4));
 
     if (wired.present) {
         addCard(
@@ -877,12 +967,40 @@ void NetworkMenu::rebuild()
             true,
             wired.connected,
             QColor(QStringLiteral("#00E5FF")),
-            [wired](bool enable) {
-                setEthernetEnabled(wired, enable);
+            [this, wired](bool enable) {
+                if (wired.device.isEmpty()) {
+                    return;
+                }
+
+                QVector<QPair<QString, QStringList>> steps;
+
+                if (enable) {
+                    if (!wired.connection.isEmpty()) {
+                        steps.push_back(
+                            {QStringLiteral("nmcli"),
+                             {QStringLiteral("connection"), QStringLiteral("up"), wired.connection}});
+                    }
+
+                    steps.push_back(
+                        {QStringLiteral("nmcli"),
+                         {QStringLiteral("device"), QStringLiteral("connect"), wired.device}});
+                } else {
+                    steps.push_back(
+                        {QStringLiteral("nmcli"),
+                         {QStringLiteral("device"), QStringLiteral("disconnect"), wired.device}});
+
+                    if (!wired.connection.isEmpty()) {
+                        steps.push_back(
+                            {QStringLiteral("nmcli"),
+                             {QStringLiteral("connection"), QStringLiteral("down"), wired.connection}});
+                    }
+                }
+
+                runFirstOk(steps);
             });
     }
 
-    const QVector<VpnConnection> vpns = vpnConnections();
+    const QVector<VpnConnection> vpns = vpnConnections(field(5), field(6));
     addSection(QStringLiteral("VPN"));
 
     if (vpns.isEmpty()) {
@@ -916,7 +1034,7 @@ void NetworkMenu::rebuild()
 
     if (hasWifi && wifiOn) {
         addSection(QStringLiteral("Redes Wi‑Fi"));
-        const QVector<WifiNetwork> networks = wifiNetworks();
+        const QVector<WifiNetwork> networks = wifiNetworks(field(7));
 
         if (networks.isEmpty()) {
             auto *empty = new QLabel(QStringLiteral("Nenhuma rede encontrada"));
@@ -973,12 +1091,6 @@ void NetworkMenu::placeNearAnchor()
         return;
     }
 
-    const bool wasVisible = isVisible();
-
-    if (wasVisible) {
-        hide();
-    }
-
     adjustSize();
     const int height = qBound(220, sizeHint().height() + 8, 400);
     setFixedHeight(height);
@@ -999,10 +1111,18 @@ void NetworkMenu::placeNearAnchor()
     }
 
     move(x, y);
+    applyShape();
+}
 
-    if (wasVisible) {
-        show();
+void NetworkMenu::applyShape()
+{
+    if (width() < 8 || height() < 8) {
+        return;
     }
+
+    QPainterPath path;
+    path.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), kRadius, kRadius);
+    setMask(QRegion(path.toFillPolygon().toPolygon()));
 }
 
 void NetworkMenu::composePlate()
@@ -1011,22 +1131,20 @@ void NetworkMenu::composePlate()
         return;
     }
 
-    clearMask();
+    if (!isVisible()) {
+        QScreen *screen = this->screen();
 
-    QPixmap behind;
-    QScreen *screen = this->screen();
+        if (screen == nullptr && anchor_ != nullptr) {
+            screen = anchor_->screen();
+        }
 
-    if (screen == nullptr && anchor_ != nullptr) {
-        screen = anchor_->screen();
+        if (screen != nullptr) {
+            backdrop_ = screen->grabWindow(0, x(), y(), width(), height());
+        }
     }
 
-    if (screen != nullptr) {
-        behind = screen->grabWindow(0, x(), y(), width(), height());
-    }
+    const QPixmap frosted = blurredBackdrop(backdrop_);
 
-    const QPixmap frosted = blurredBackdrop(behind);
-
-    // Paint at 3x then downsample so glass edges stay smooth without a jagged X11 mask.
     constexpr int scale = 3;
     QImage sharp(width() * scale, height() * scale, QImage::Format_ARGB32_Premultiplied);
     sharp.fill(Qt::transparent);
@@ -1038,8 +1156,8 @@ void NetworkMenu::composePlate()
 
     if (!frosted.isNull()) {
         painter.drawPixmap(rect(), frosted, frosted.rect());
-    } else if (!behind.isNull()) {
-        painter.drawPixmap(rect(), behind, behind.rect());
+    } else if (!backdrop_.isNull()) {
+        painter.drawPixmap(rect(), backdrop_, backdrop_.rect());
     } else {
         painter.fillRect(rect(), QColor(18, 24, 32));
     }
@@ -1047,9 +1165,8 @@ void NetworkMenu::composePlate()
     const QRectF box(0.75, 0.75, width() - 1.5, height() - 1.5);
     QPainterPath shape;
     shape.addRoundedRect(box, kRadius, kRadius);
-    painter.fillPath(shape, QColor(18, 24, 32, 217));
-    painter.setPen(QPen(QColor(255, 255, 255, 38), 1.0));
-    painter.setBrush(Qt::NoBrush);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(18, 24, 32, 217));
     painter.drawPath(shape);
     painter.end();
 
@@ -1057,6 +1174,7 @@ void NetworkMenu::composePlate()
         size(),
         Qt::IgnoreAspectRatio,
         Qt::SmoothTransformation));
+    applyShape();
     update();
 }
 
@@ -1073,20 +1191,21 @@ void NetworkMenu::paintEvent(QPaintEvent *event)
     painter.setRenderHint(QPainter::Antialiasing);
     QPainterPath shape;
     shape.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), kRadius, kRadius);
-    painter.fillPath(shape, QColor(18, 24, 32, 230));
-    painter.setPen(QPen(QColor(255, 255, 255, 38), 1.0));
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(18, 24, 32, 230));
     painter.drawPath(shape);
 }
 
 void NetworkMenu::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
+    applyShape();
 }
 
 void NetworkMenu::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
-    composePlate();
+    applyShape();
 }
 
 bool NetworkMenu::eventFilter(QObject *watched, QEvent *event)

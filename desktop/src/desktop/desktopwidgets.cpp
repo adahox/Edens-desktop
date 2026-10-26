@@ -2,8 +2,11 @@
 #include "desktop/glassstyle.hpp"
 #include "desktop/sysmetrics.hpp"
 
+#include <QCheckBox>
 #include <QDate>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
@@ -12,20 +15,34 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QLocale>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QPushButton>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QRegion>
+#include <QSaveFile>
 #include <QScreen>
+#include <QStandardPaths>
 #include <QSet>
 #include <QTimer>
 #include <QUrl>
+#include <QVBoxLayout>
 
 #include <algorithm>
 
 namespace {
+
+QString widgetConfigPath()
+{
+    const QString directory = QDir::home().filePath(QStringLiteral(".config/eden"));
+    QDir().mkpath(directory);
+    return QDir(directory).filePath(QStringLiteral("widgets"));
+}
 
 QString weatherText(int code)
 {
@@ -136,9 +153,13 @@ void drawClockFace(QPainter &painter, const QRect &rect, const QTime &time)
 DesktopWidgets::DesktopWidgets(QWidget *parent)
     : QWidget(parent)
 {
-    setAttribute(Qt::WA_TranslucentBackground);
+    setAutoFillBackground(false);
     setAttribute(Qt::WA_NoSystemBackground);
+    setAttribute(Qt::WA_StyledBackground, false);
     setFocusPolicy(Qt::NoFocus);
+    setCursor(Qt::OpenHandCursor);
+    setToolTip(QStringLiteral("Arraste para mover"));
+    loadConfig();
     network_ = new QNetworkAccessManager(this);
 
     auto *timer = new QTimer(this);
@@ -155,12 +176,224 @@ DesktopWidgets::DesktopWidgets(QWidget *parent)
     });
 }
 
+bool DesktopWidgets::enabled(const QString &id) const
+{
+    if (id == QLatin1String("clock")) {
+        return clockEnabled_;
+    }
+
+    if (id == QLatin1String("weather")) {
+        return weatherEnabled_;
+    }
+
+    if (id == QLatin1String("calendar")) {
+        return calendarEnabled_;
+    }
+
+    if (id == QLatin1String("activity")) {
+        return activityEnabled_;
+    }
+
+    return false;
+}
+
+void DesktopWidgets::loadConfig()
+{
+    clockEnabled_ = false;
+    weatherEnabled_ = false;
+    calendarEnabled_ = false;
+    activityEnabled_ = false;
+
+    QFile file(widgetConfigPath());
+
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return;
+    }
+
+    bool sawX = false;
+    bool sawY = false;
+    const QStringList lines = QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'));
+
+    for (const QString &line : lines) {
+        const int split = line.indexOf(QLatin1Char('='));
+
+        if (split <= 0) {
+            continue;
+        }
+
+        const QString key = line.left(split).trimmed();
+        const QString value = line.mid(split + 1).trimmed();
+        const bool on = value == QLatin1String("1");
+
+        if (key == QLatin1String("clock")) {
+            clockEnabled_ = on;
+        } else if (key == QLatin1String("weather")) {
+            weatherEnabled_ = on;
+        } else if (key == QLatin1String("calendar")) {
+            calendarEnabled_ = on;
+        } else if (key == QLatin1String("activity")) {
+            activityEnabled_ = on;
+        } else if (key == QLatin1String("x")) {
+            bool ok = false;
+            const int parsed = value.toInt(&ok);
+
+            if (ok) {
+                posX_ = parsed;
+                sawX = true;
+            }
+        } else if (key == QLatin1String("y")) {
+            bool ok = false;
+            const int parsed = value.toInt(&ok);
+
+            if (ok) {
+                posY_ = parsed;
+                sawY = true;
+            }
+        }
+    }
+
+    placed_ = sawX && sawY;
+}
+
+void DesktopWidgets::saveConfig()
+{
+    QSaveFile file(widgetConfigPath());
+
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return;
+    }
+
+    QByteArray body =
+        "clock=" + QByteArray(clockEnabled_ ? "1" : "0") + "\n"
+        "weather=" + QByteArray(weatherEnabled_ ? "1" : "0") + "\n"
+        "calendar=" + QByteArray(calendarEnabled_ ? "1" : "0") + "\n"
+        "activity=" + QByteArray(activityEnabled_ ? "1" : "0") + "\n";
+
+    if (placed_) {
+        body += "x=" + QByteArray::number(posX_) + "\n";
+        body += "y=" + QByteArray::number(posY_) + "\n";
+    }
+    file.write(body);
+    file.commit();
+}
+
+void DesktopWidgets::configure()
+{
+    QDialog dialog(window());
+    dialog.setWindowTitle(QStringLiteral("Configurar widgets"));
+    dialog.setMinimumWidth(340);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *hint = new QLabel(
+        QStringLiteral("Marque os widgets que ficam na área de trabalho. Desmarque para remover."),
+        &dialog);
+    hint->setWordWrap(true);
+    layout->addWidget(hint);
+
+    auto *clock = new QCheckBox(QStringLiteral("Relógio"), &dialog);
+    auto *weather = new QCheckBox(QStringLiteral("Clima"), &dialog);
+    auto *calendar = new QCheckBox(QStringLiteral("Calendário"), &dialog);
+    auto *activity = new QCheckBox(QStringLiteral("Atividade"), &dialog);
+    clock->setChecked(clockEnabled_);
+    weather->setChecked(weatherEnabled_);
+    calendar->setChecked(calendarEnabled_);
+    activity->setChecked(activityEnabled_);
+    layout->addWidget(clock);
+    layout->addWidget(weather);
+    layout->addWidget(calendar);
+    layout->addWidget(activity);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Aplicar"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("Cancelar"));
+    layout->addWidget(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    clockEnabled_ = clock->isChecked();
+    weatherEnabled_ = weather->isChecked();
+    calendarEnabled_ = calendar->isChecked();
+    activityEnabled_ = activity->isChecked();
+    saveConfig();
+    reposition();
+    update();
+}
+
 void DesktopWidgets::reposition()
+{
+    const bool any = clockEnabled_ || weatherEnabled_ || calendarEnabled_ || activityEnabled_;
+
+    if (!any) {
+        clearMask();
+        hide();
+        return;
+    }
+
+    const QRect area = workArea();
+
+    if (area.width() < 200 || area.height() < 400) {
+        return;
+    }
+
+    constexpr int width = 308;
+    constexpr int top = 70;
+    constexpr int gap = 12;
+    int height = 0;
+    int count = 0;
+
+    if (clockEnabled_) {
+        height += 156;
+        ++count;
+    }
+
+    if (weatherEnabled_) {
+        height += 112;
+        ++count;
+    }
+
+    if (calendarEnabled_) {
+        height += 220;
+        ++count;
+    }
+
+    if (activityEnabled_) {
+        height += 150;
+        ++count;
+    }
+
+    height += gap * std::max(0, count - 1);
+
+    int x = area.right() - width - 16;
+    int y = area.top() + top;
+
+    if (placed_) {
+        x = posX_;
+        y = posY_;
+    }
+
+    const int maxX = qMax(area.left(), area.left() + area.width() - width);
+    const int maxY = qMax(area.top(), area.top() + area.height() - height);
+    x = qBound(area.left(), x, maxX);
+    y = qBound(area.top(), y, maxY);
+    setGeometry(x, y, width, height);
+    updateShape();
+    show();
+
+    if (!dragging_) {
+        raise();
+    }
+}
+
+QRect DesktopWidgets::workArea() const
 {
     QWidget *host = parentWidget();
 
     if (host == nullptr || host->width() < 200) {
-        return;
+        return {};
     }
 
     QRect area = host->rect();
@@ -170,17 +403,108 @@ void DesktopWidgets::reposition()
         area = QRect(topLeft, screen->size()).intersected(host->rect());
     }
 
-    if (area.width() < 200 || area.height() < 400) {
+    return area;
+}
+
+DesktopWidgets::CardRects DesktopWidgets::cardRects() const
+{
+    constexpr int gap = 12;
+    int y = 0;
+    const auto take = [&](bool on, int cardHeight) {
+        if (!on) {
+            return QRect();
+        }
+
+        const QRect card(0, y, width(), cardHeight);
+        y += cardHeight + gap;
+        return card;
+    };
+
+    CardRects cards;
+    cards.clock = take(clockEnabled_, 156);
+    cards.weather = take(weatherEnabled_, 112);
+    cards.calendar = take(calendarEnabled_, 220);
+    cards.activity = take(activityEnabled_, 150);
+    return cards;
+}
+
+void DesktopWidgets::updateShape()
+{
+    const CardRects cards = cardRects();
+    QPainterPath shape;
+    const auto add = [&shape](const QRect &card) {
+        if (!card.isEmpty()) {
+            shape.addRoundedRect(QRectF(card), EdenGlass::kRadius, EdenGlass::kRadius);
+        }
+    };
+    add(cards.clock);
+    add(cards.weather);
+    add(cards.calendar);
+    add(cards.activity);
+
+    if (shape.isEmpty()) {
+        clearMask();
         return;
     }
 
-    constexpr int width = 308;
-    constexpr int top = 70;
-    constexpr int bottomGap = 120;
-    const int height = std::clamp(area.height() - top - bottomGap, 420, 680);
-    setGeometry(area.right() - width - 16, area.top() + top, width, height);
-    show();
+    setMask(QRegion(shape.toFillPolygon().toPolygon()));
+}
+
+void DesktopWidgets::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() != Qt::LeftButton) {
+        QWidget::mousePressEvent(event);
+        return;
+    }
+
+    dragging_ = true;
+    dragOffset_ = event->pos();
+    setCursor(Qt::ClosedHandCursor);
     raise();
+    event->accept();
+}
+
+void DesktopWidgets::mouseMoveEvent(QMouseEvent *event)
+{
+    if (!dragging_ || (event->buttons() & Qt::LeftButton) == 0) {
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
+
+    const QPoint desired = mapToParent(event->pos() - dragOffset_);
+    const QRect area = workArea();
+    int x = desired.x();
+    int y = desired.y();
+
+    if (!area.isEmpty()) {
+        const int maxX = qMax(area.left(), area.left() + area.width() - width());
+        const int maxY = qMax(area.top(), area.top() + area.height() - height());
+        x = qBound(area.left(), x, maxX);
+        y = qBound(area.top(), y, maxY);
+    }
+
+    move(x, y);
+    posX_ = x;
+    posY_ = y;
+    placed_ = true;
+    event->accept();
+}
+
+void DesktopWidgets::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() != Qt::LeftButton) {
+        QWidget::mouseReleaseEvent(event);
+        return;
+    }
+
+    dragging_ = false;
+    setCursor(Qt::OpenHandCursor);
+
+    if (placed_) {
+        saveConfig();
+    }
+
+    event->accept();
 }
 
 void DesktopWidgets::sampleActivity()
@@ -340,33 +664,19 @@ void DesktopWidgets::paintEvent(QPaintEvent *)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setCompositionMode(QPainter::CompositionMode_Source);
-    painter.fillRect(rect(), Qt::transparent);
-    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
     const EdenGlass::Appearance look = EdenGlass::current();
     const QLocale locale(QLocale::Portuguese, QLocale::Brazil);
-    const int gap = 12;
-    int clockH = 156;
-    int weatherH = 112;
-    int activityH = 150;
-    int calendarH = height() - clockH - weatherH - activityH - gap * 3;
+    const CardRects cards = cardRects();
+    const QRect clockRect = cards.clock;
+    const QRect weatherRect = cards.weather;
+    const QRect calendarRect = cards.calendar;
+    const QRect activityRect = cards.activity;
 
-    if (calendarH < 168) {
-        const int deficit = 168 - calendarH;
-        activityH = std::max(110, activityH - deficit / 2);
-        clockH = std::max(128, clockH - deficit / 2);
-        calendarH = height() - clockH - weatherH - activityH - gap * 3;
-    }
+    QFont body = painter.font();
+    body.setPointSize(10);
+    body.setWeight(QFont::Normal);
 
-    int y = 0;
-    const QRect clockRect(0, y, width(), clockH);
-    y += clockH + gap;
-    const QRect weatherRect(0, y, width(), weatherH);
-    y += weatherH + gap;
-    const QRect calendarRect(0, y, width(), std::max(120, calendarH));
-    y += calendarRect.height() + gap;
-    const QRect activityRect(0, y, width(), std::max(90, height() - y));
-
+    if (clockEnabled_) {
     drawCard(painter, clockRect, QStringLiteral("Relógio"));
     const QRect face(clockRect.left() + 16, clockRect.top() + 40, 96, 96);
     drawClockFace(painter, face, QTime::currentTime());
@@ -379,16 +689,15 @@ void DesktopWidgets::paintEvent(QPaintEvent *)
     const QRect textColumn = clockRect.adjusted(128, 42, -16, -16);
     painter.drawText(textColumn, Qt::AlignLeft | Qt::AlignTop, QTime::currentTime().toString(QStringLiteral("HH:mm")));
     painter.setPen(look.mutedColor());
-    QFont body = painter.font();
-    body.setPointSize(10);
-    body.setWeight(QFont::Normal);
     painter.setFont(body);
     const EdenMetrics::Snapshot metrics = EdenMetrics::current();
     painter.drawText(
         textColumn.adjusted(0, 36, 0, 0),
         Qt::AlignLeft | Qt::AlignTop,
         QStringLiteral("Ativo há\n%1").arg(EdenMetrics::formatDuration(metrics.uptimeSeconds)));
+    }
 
+    if (weatherEnabled_) {
     drawCard(painter, weatherRect, QStringLiteral("Clima"));
 
     if (!weatherReady_ && summary_.isEmpty()) {
@@ -425,7 +734,9 @@ void DesktopWidgets::paintEvent(QPaintEvent *)
             forecastX += 94;
         }
     }
+    }
 
+    if (calendarEnabled_) {
     drawCard(painter, calendarRect, locale.toString(QDate::currentDate(), QStringLiteral("MMMM yyyy")));
     const QDate today = QDate::currentDate();
     const QDate first(today.year(), today.month(), 1);
@@ -461,6 +772,11 @@ void DesktopWidgets::paintEvent(QPaintEvent *)
         }
 
         painter.drawText(cell, Qt::AlignCenter, QString::number(day));
+    }
+    }
+
+    if (!activityEnabled_) {
+        return;
     }
 
     drawCard(painter, activityRect, QStringLiteral("Atividade"));
